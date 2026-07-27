@@ -95,6 +95,10 @@ train:
   val_subset: 2000
   match_px: 8.0
   tau_hm: 0.3
+  wandb:
+    enabled: true
+    project: conv-chart
+    mode: online
   early_stop:
     enabled: true
     patience: 3

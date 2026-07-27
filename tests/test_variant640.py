@@ -8,7 +8,8 @@ import onnx
 import pytest
 import torch
 
-from dcc.model import AxialRoPE, DetectorNet
+from dcc.dataset import load_config
+from dcc.model import AxialRoPE, DetectorNet, detector_kwargs
 
 ROOT = Path(__file__).parents[1]
 
@@ -20,6 +21,18 @@ def train_detector():
     pattern for tools/preflight.py).
     """
     spec = importlib.util.spec_from_file_location("_train_detector_under_test", ROOT / "tools" / "train_detector.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def preflight():
+    """tools.preflight, loaded by absolute path -- same tools-shadowing workaround as the
+    train_detector fixture above (identical pattern to tests/test_guards.py's own preflight
+    fixture).
+    """
+    spec = importlib.util.spec_from_file_location("_preflight_under_test", ROOT / "tools" / "preflight.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -137,3 +150,54 @@ def test_early_stop_no_trigger_when_disabled(train_detector):
     es_cfg = {"enabled": False, "patience": 3, "min_steps": 100000, "tail_gate": 0.01}
     history = _flat_window(train_detector, [100000, 110000, 120000])
     assert train_detector.early_stop_should_trigger(history, 120000, es_cfg) is False
+
+
+def test_preflight_builds_attend_div_8_for_rev640():
+    cfg = load_config(str(ROOT / "configs" / "rev640.yaml"))
+    W, H = cfg["input_size"]
+    model = DetectorNet(H, W, **detector_kwargs(cfg))
+    assert model.attend_div == 8
+    assert not hasattr(model, "e5")
+
+
+def test_preflight_builds_attend_div_16_for_default():
+    cfg = load_config(str(ROOT / "configs" / "default.yaml"))
+    W, H = cfg["input_size"]
+    model = DetectorNet(H, W, **detector_kwargs(cfg))
+    assert model.attend_div == 16
+    assert hasattr(model, "e5")
+
+
+def test_grad_groups_filtering_attend_div_8(preflight):
+    model = DetectorNet(240, 320, attend_div=8)
+    present = [g for g in preflight.GRAD_GROUPS if hasattr(model, g)]
+    assert present == ["e1", "e2", "e3", "e4", "blocks", "gate3", "d1", "d2", "d3", "hm", "cls"]
+    assert set(preflight.GRAD_GROUPS) - set(present) == {"e5", "gate4", "d4"}
+
+
+def test_grad_groups_filtering_attend_div_16(preflight):
+    model = DetectorNet(240, 320, attend_div=16)
+    present = [g for g in preflight.GRAD_GROUPS if hasattr(model, g)]
+    assert present == list(preflight.GRAD_GROUPS)
+
+
+def test_wandb_wiring_smoke(train_detector, tmp_path):
+    pytest.importorskip("wandb")
+    wandb_cfg = {"enabled": True, "project": "conv-chart-test", "mode": "disabled"}
+    run = train_detector._wandb_init({"dummy": True}, wandb_cfg, tmp_path, "smoke")
+    assert run is not None
+
+    train_detector._wandb_log(run, 1, loss=0.5,
+                               val={"val_loss": 0.4, "m01": {"mean": 1.2, "tail_frac_gt4px": None},
+                                    "m02": {"12-16": 0.9}, "m04": None, "diag": {}})
+    train_detector._wandb_log_preview(run, tmp_path, 1, "val")
+    train_detector._wandb_finish(run)
+
+    assert "wandb" not in train_detector._WARNED
+
+
+def test_wandb_disabled_by_default_is_a_noop(train_detector, tmp_path):
+    run = train_detector._wandb_init({"dummy": True}, {"enabled": False}, tmp_path, "smoke")
+    assert run is None
+    train_detector._wandb_log(run, 1, loss=0.5)
+    train_detector._wandb_finish(run)

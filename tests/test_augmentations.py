@@ -173,9 +173,9 @@ def test_droplet_hole_registration_integration(cfg, bg_files):
 
 
 def test_differencing(cfg, bg_files):
-    """Petschnigg-et-al. flash/no-flash differencing: clipped-zero pixels appear, and a nonzero
-    inter-frame shift creates a "doubled edge" (a band of clipped-zero AND anomalously bright
-    pixels straddling a static high-contrast edge) that a perfectly-aligned zero-shift
+    """Petschnigg/Eisemann-Durand flash/no-flash differencing: clipped-zero pixels appear, and a
+    nonzero inter-frame shift creates a "doubled edge" (a band of clipped-zero AND anomalously
+    bright pixels straddling a static high-contrast edge) that a perfectly-aligned zero-shift
     subtraction does not produce.
     """
     h2 = w2 = 240
@@ -186,8 +186,9 @@ def test_differencing(cfg, bg_files):
 
     def run(shift_range):
         ph = _photometric_only(cfg, differencing_p=1.0)
-        ph.update(differencing_ambient=[0.15, 0.15], differencing_illum_peak=[1.0, 1.0],
-                  differencing_illum_floor=[1.0, 1.0], differencing_shift_px=shift_range)
+        ph.update(differencing_ambient=[0.15, 0.15], differencing_illum_peak=[0.85, 0.85],
+                  differencing_illum_floor=[0.85, 0.85], differencing_shift_px=shift_range,
+                  sensor_noise_electrons_per_dn=[5000.0, 5000.0], sensor_noise_read_std=[0.0, 0.0])
         return _apply_photometric(work.copy(), np.random.default_rng(3), ph, w2, h2)
 
     zero_shift = run([0.0, 0.0])
@@ -228,12 +229,74 @@ def test_dark_greyout_output_coupled(cfg):
 
     ph = _photometric_only(cfg, differencing_p=1.0)
     ph.update(differencing_ambient=[0.03, 0.03], differencing_illum_peak=[2.0, 2.0],
-              differencing_illum_floor=[2.0, 2.0], differencing_shift_px=[0.0, 0.0])
+              differencing_illum_floor=[2.0, 2.0], differencing_shift_px=[0.0, 0.0],
+              sensor_noise_electrons_per_dn=[5000.0, 5000.0], sensor_noise_read_std=[0.0, 0.0])
     out = _apply_photometric(work.copy(), np.random.default_rng(1), ph, w2, h2)
 
     inner = r < disc_r - 5
     print("test_dark_greyout_output_coupled inner-disc min:", out[..., 0][inner].min())
     assert out[..., 0][inner].min() > 240
+
+
+def test_differencing_noise_scales_with_pedestal(cfg):
+    """rev-3 (Kaelin's 940nm rig photometry, 2026-07-28): per-frame sensor noise is applied to the
+    (large) daylight pedestal on EACH captured frame, not to the (small) post-subtraction
+    residual -- at a realistic high-ambient/low-LED-increment ratio, the differenced output's
+    variance must be measurably larger than a SINGLE Poisson-Gaussian pass applied directly at
+    the residual's own (much smaller) level -- the old (rev-2) noise-after-subtraction model,
+    reproduced here inline rather than by calling the legacy branch, since it's exactly what the
+    downstream sensor-noise step (6) would have done to a same-mean flat frame.
+    """
+    h2 = w2 = 32
+    work = np.full((h2, w2, 3), 200.0, dtype=np.float32)
+    K, sigma_read = 2.0, 1.5
+
+    def diff_mean_var(n=150):
+        ph = _photometric_only(cfg, differencing_p=1.0)
+        ph.update(differencing_ambient=[0.9, 0.9], differencing_illum_peak=[0.2, 0.2],
+                  differencing_illum_floor=[0.2, 0.2], differencing_shift_px=[0.0, 0.0],
+                  sensor_noise_electrons_per_dn=[K, K], sensor_noise_read_std=[sigma_read, sigma_read],
+                  dark_greyout_white_thresh=0.0)
+        vals = [_apply_photometric(work.copy(), np.random.default_rng(2000 + i), ph, w2, h2)[0, 0, 0]
+                for i in range(n)]
+        return float(np.mean(vals)), float(np.var(vals))
+
+    def residual_only_var(mean_level, n=150):
+        flat = np.full((h2, w2, 3), mean_level, dtype=np.float32)
+        vals = []
+        for i in range(n):
+            rng = np.random.default_rng(3000 + i)
+            rate = np.maximum(flat, 0.0) * K
+            shot = rng.poisson(rate).astype(np.float32) / K
+            read = rng.normal(0, sigma_read, flat.shape).astype(np.float32)
+            vals.append((shot + read)[0, 0, 0])
+        return float(np.var(vals))
+
+    mean_diff, var_diff = diff_mean_var()
+    var_residual_only = residual_only_var(mean_diff)
+    print("test_differencing_noise_scales_with_pedestal: mean=%.2f var_diff=%.2f var_residual_only=%.2f"
+          % (mean_diff, var_diff, var_residual_only))
+    assert var_diff > var_residual_only * 3
+
+
+def test_differencing_window_mode_smoke(cfg):
+    """rev-3's per-frame noise is pointwise and the illumination lobe already evaluates at absolute
+    coordinates (see dcc/synth.py) -- no window-specific handling needed; confirms differencing
+    runs cleanly (valid shape/dtype/range, deterministic) under window_origin, matching how the
+    fast refiner arm actually calls it.
+    """
+    h2 = w2 = 40
+    work = np.full((h2, w2, 3), 128.0, dtype=np.float32)
+    ph = _photometric_only(cfg, differencing_p=1.0)
+
+    def run():
+        return _apply_photometric(work.copy(), np.random.default_rng(9), ph, w2, h2,
+                                   window_origin=(37, 51), board_centroid=(50.0, 60.0))
+
+    out1, out2 = run(), run()
+    assert out1.shape == (h2, w2, 3) and out1.dtype == np.float32
+    assert np.all((out1 >= 0) & (out1 <= 255))
+    assert np.array_equal(out1, out2)
 
 
 def test_poisson_gaussian_shot_noise(cfg):

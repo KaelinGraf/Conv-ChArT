@@ -95,8 +95,8 @@ synth:
     ink_contrast_p: 0.3
     ink_contrast_scale: [1.0, 1.6]
     differencing_p: 0.5
-    differencing_ambient: [0.02, 0.15]
-    differencing_illum_peak: [0.7, 1.3]
+    differencing_ambient: [0.05, 0.95]
+    differencing_illum_peak: [0.15, 0.9]
     differencing_illum_floor: [0.05, 0.3]
     differencing_illum_sigma_frac: [0.25, 0.45]
     differencing_shift_px: [0.2, 3.0]

@@ -3,8 +3,11 @@ passes, 1 if any fails, 2 if the background corpus isn't there yet. Argparse
 runs before any heavy import so --help never needs dcc/numpy/cv2/matplotlib.
 """
 import argparse
+import functools
 import hashlib
 import json
+import multiprocessing as mp
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +24,9 @@ def build_parser():
     p.add_argument("--n-overlay", type=int, default=200)
     p.add_argument("--n-roundtrip", type=int, default=1000)
     p.add_argument("--save", action="store_true", help="also materialise the dist pass to val_set.npz")
+    p.add_argument("--workers", type=int, default=min(8, (os.cpu_count() or 1) - 4),
+                    help="sample-generation pool size; <=1 runs the plain in-process loop (this machine "
+                         "also hosts live training/audit jobs -- default leaves them headroom)")
     return p
 
 
@@ -40,22 +46,25 @@ def _bin_gate(vals, edges, tol, log=False):
     return frac.tolist(), bool(np.all(np.abs(frac - share) <= tol * share))
 
 
-def _recompose_corners(comp, corner_px, render_res, w2, h2):
+def _recompose_corners(comp, corner_px, render_res, nx, w2, h2):
     """Audit round-trip: the full 3x3 H rebuilt from meta['components']
     independently of dcc.synth._sample_affine/_perspective_factor, so a
-    regression there can't cancel itself out."""
+    regression there can't cancel itself out. nx is the board's per-side
+    square count (SQ = render_res // nx) -- must be derived from the same
+    cfg["board"] dcc.synth._composite_board used, or the recomposed H uses
+    the wrong scale for any non-default board."""
     import numpy as np
+    SQ = render_res // nx
     R = np.array([[np.cos(comp["theta"]), -np.sin(comp["theta"])],
                   [np.sin(comp["theta"]), np.cos(comp["theta"])]])
     Sh = np.array([[1.0, np.tan(comp["shear_x"])], [np.tan(comp["shear_y"]), 1.0]])
-    A = (comp["s"] / (render_res // 5)) * (R @ Sh)
+    A = (comp["s"] / SQ) * (R @ Sh)
     c_r = np.array([(render_res - 1) / 2, (render_res - 1) / 2])
     c_in = np.array([(w2 - 1) / 2, (h2 - 1) / 2])
     m2 = c_in + np.array([comp["tx"], comp["ty"]]) - A @ c_r
     M3 = np.eye(3)
     M3[:2, :2], M3[:2, 2] = A, m2
 
-    SQ = render_res // 5
     g = np.sin(comp["tilt"]) * comp["s"] / (comp["fov_scale"] * w2 * SQ)
     gx, gy = g * np.cos(comp["psi"]), g * np.sin(comp["psi"])
     cr = (render_res - 1) / 2
@@ -119,31 +128,89 @@ class _NpEnc(json.JSONEncoder):
         return super().default(o)
 
 
-def _gate_overlays(SynthVal, viz, cfg, val_seed, n_overlay, out):
+_POOL_CFG = _POOL_BG = None
+
+
+def _pool_init(cfg, bg_files):
+    """Spawn-worker bootstrap (same idiom as tools/train_detector.py's/
+    tools/train_refiner.py's own _worker_init): one process, one cv2 thread
+    -- N worker processes each defaulting to cv2's own internal thread pool
+    would oversubscribe the machine -- and stash cfg/bg_files as globals so
+    a task only has to pickle whatever actually varies per-sample. Never
+    fork: cv2's thread pool and fork is a known deadlock footgun on this
+    machine, hence the spawn context in _run_pool below."""
     import cv2
-    ds = SynthVal(cfg, n_overlay, val_seed)
-    imgs = [viz.draw_overlay(*ds[i]) for i in range(n_overlay)]
+    global _POOL_CFG, _POOL_BG
+    cv2.setNumThreads(1)
+    _POOL_CFG, _POOL_BG = cfg, bg_files
+
+
+def _run_pool(worker, tasks, cfg, bg_files, workers, chunksize=1):
+    """Ordered map of `worker` (a module-level function, typically a
+    functools.partial binding whatever's invariant across `tasks` ahead of
+    the one varying argument) over `tasks`. workers<=1 skips the pool
+    entirely and runs the plain in-process loop -- no forced single-threaded
+    cv2 either, since there's no sibling worker process to oversubscribe
+    against. Otherwise a spawn-context Pool whose initializer loads
+    cfg/bg_files ONCE per worker process: bg_files is a COCO-scale path
+    list, far too big to re-pickle on every task or chunk."""
+    global _POOL_CFG, _POOL_BG
+    if workers <= 1:
+        _POOL_CFG, _POOL_BG = cfg, bg_files
+        return [worker(t) for t in tasks]
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(workers, initializer=_pool_init, initargs=(cfg, bg_files)) as pool:
+        return list(pool.imap(worker, tasks, chunksize=chunksize))
+
+
+def _overlay_worker(generate_sample, val_seed, n, i):
+    """One SynthVal(cfg, n, val_seed)[i]'s (image, record) pair, via
+    _val_sample (bit-identical, see its docstring) -- skips building a
+    SynthVal instance (and the backgrounds re-glob its constructor costs)
+    per worker."""
+    record, _ = _val_sample(generate_sample, _POOL_CFG, _POOL_BG, val_seed, n, i)
+    return record
+
+
+def _gate_overlays(generate_sample, viz, cfg, bg_files, val_seed, n_overlay, out, workers):
+    import cv2
+    worker = functools.partial(_overlay_worker, generate_sample, val_seed, n_overlay)
+    records = _run_pool(worker, range(n_overlay), cfg, bg_files, workers, chunksize=4)
+    imgs = [viz.draw_overlay(r["image"], r) for r in records]
     for s in range(0, len(imgs), 25):
         cv2.imwrite(str(out / f"overlay_{s // 25:02d}.png"), viz.tile(imgs[s:s + 25]))
 
 
-def _gate_distributions(generate_sample, cfg, bg_files, val_seed, n_dist, out, save):
+def _dist_worker(generate_sample, val_seed, n, save, i):
+    """One _val_sample(...) draw's contribution to the distribution gate:
+    (is_positive, s_px, visible_count, has_hole) plus, only when saving the
+    val_set.npz materialisation, the (image, record) pair itself -- keeps
+    pool traffic to scalars on the (default, --save-less) common path."""
+    record, meta = _val_sample(generate_sample, _POOL_CFG, _POOL_BG, val_seed, n, i)
+    positive = record["board_present"]
+    vis = sum(c["visible"] for c in record["corners"]) if positive else 0
+    stats = (positive, record["s_px"], vis, bool(meta["holes"]))
+    return stats, (record["image"], record) if save else None
+
+
+def _gate_distributions(generate_sample, cfg, bg_files, val_seed, n_dist, out, save, workers):
     import numpy as np
     import matplotlib.pyplot as plt
+    worker = functools.partial(_dist_worker, generate_sample, val_seed, n_dist, save)
     s_pos, vis_counts, neg_count, hole_count = [], [], 0, 0
     images, records = [], []
-    for i in range(n_dist):
-        record, meta = _val_sample(generate_sample, cfg, bg_files, val_seed, n_dist, i)
-        if record["board_present"]:
-            s_pos.append(record["s_px"])
-            vis_counts.append(sum(c["visible"] for c in record["corners"]))
+    for stats, saved in _run_pool(worker, range(n_dist), cfg, bg_files, workers, chunksize=16):
+        positive, s_px, vis, had_hole = stats
+        if positive:
+            s_pos.append(s_px)
+            vis_counts.append(vis)
         else:
             neg_count += 1
-        if meta["holes"]:
+        if had_hole:
             hole_count += 1
         if save:
-            images.append(record["image"])
-            records.append(record)
+            images.append(saved[0])
+            records.append(saved[1])
 
     s_pos = np.array(s_pos)
     a, b = cfg["scale_range_px"]
@@ -179,21 +246,32 @@ def _gate_distributions(generate_sample, cfg, bg_files, val_seed, n_dist, out, s
     return gates, report
 
 
-def _gate_roundtrip(generate_sample, board, cfg, bg_files, val_seed, n_roundtrip):
+def _roundtrip_worker(generate_sample, corner_px, render_res, nx, w2, h2, n_cls, val_seed, i):
+    """One round-trip sample's max corner error: rebuild H from
+    meta['components'] independently (_recompose_corners) and diff against
+    generate_sample's own image-space corners."""
     import numpy as np
+    rng = np.random.default_rng([val_seed, i])
+    record, meta = generate_sample(_POOL_CFG, rng, _POOL_BG, photometric=False, occlude=False,
+                                    force_negative=False)
+    corners_img = _recompose_corners(meta["components"], corner_px, render_res, nx, w2, h2)
+    record_xy = np.zeros((n_cls, 2))
+    for c in record["corners"]:
+        record_xy[c["index"]] = (c["x"], c["y"])
+    return float(np.linalg.norm(corners_img - record_xy, axis=1).max())
+
+
+def _gate_roundtrip(generate_sample, board, cfg, bg_files, val_seed, n_roundtrip, workers):
+    bcfg = cfg.get("board")
+    nx = board.get_board(bcfg)[1]
     render_res = cfg["synth"]["render_res"]
     W, H = cfg["input_size"]
-    _, corner_px = board.render_board(render_res)
-    worst = 0.0
-    for i in range(n_roundtrip):
-        rng = np.random.default_rng([val_seed, i])
-        record, meta = generate_sample(cfg, rng, bg_files, photometric=False, occlude=False,
-                                        force_negative=False)
-        corners_img = _recompose_corners(meta["components"], corner_px, render_res, W, H)
-        record_xy = np.zeros((16, 2))
-        for c in record["corners"]:
-            record_xy[c["index"]] = (c["x"], c["y"])
-        worst = max(worst, float(np.linalg.norm(corners_img - record_xy, axis=1).max()))
+    _, corner_px = board.render_board(render_res, bcfg)
+    n_cls = board.n_corners(bcfg)
+    worker = functools.partial(_roundtrip_worker, generate_sample, corner_px, render_res, nx, W, H, n_cls,
+                                val_seed)
+    errs = _run_pool(worker, range(n_roundtrip), cfg, bg_files, workers, chunksize=8)
+    worst = max(errs) if errs else 0.0
     return worst < 0.01, worst
 
 
@@ -211,13 +289,43 @@ def _gate_repeatability(SynthVal, cfg, args_config, val_seed):
     return main_hashes == sub_hashes
 
 
-def _gate_refiner(RefinerVal, generate_sample, cut_refiner_crops, cfg, bg_files, val_seed, out):
+_POOL_REFINER_DS = None
+
+
+def _refiner_dhist_worker(RefinerVal, n_composites, i):
+    """One RefinerVal(cfg, n, val_seed+1)[i]'s crop list, via the real
+    RefinerVal (this gate exists to catch regressions IN that class, so it
+    must not reimplement its __getitem__) -- built once per worker process
+    and memoised, since its constructor re-globs the background corpus."""
+    global _POOL_REFINER_DS
+    if _POOL_REFINER_DS is None or _POOL_REFINER_DS.cfg is not _POOL_CFG:
+        _POOL_REFINER_DS = RefinerVal(_POOL_CFG, n_composites)
+    return _POOL_REFINER_DS[i]
+
+
+def _refiner_content_worker(generate_sample, cut_refiner_crops, val_seed, refiner_res_mult, i):
+    """One val_seed+2 composite's refiner crops for the content-check pass --
+    independent of the val_seed / val_seed+1 streams SynthVal and RefinerVal
+    already consume, so this content-check draws its own composites rather
+    than re-walking samples another gate already used."""
+    import numpy as np
+    rng = np.random.default_rng([val_seed + 2, i])
+    record, _ = generate_sample(_POOL_CFG, rng, _POOL_BG, size_mult=refiner_res_mult,
+                                 photometric=False, force_negative=False)
+    pts = [(c["x"], c["y"]) for c in record["corners"] if c["visible"]]
+    return cut_refiner_crops(_POOL_CFG, rng, record["image"], pts)
+
+
+def _gate_refiner(RefinerVal, generate_sample, cut_refiner_crops, cfg, bg_files, val_seed, out, workers):
     import numpy as np
     import cv2
     import matplotlib.pyplot as plt
     syn = cfg["synth"]
-    ds = RefinerVal(cfg, syn["refiner_val_composites"])  # default seed = val_seed+1: audit the CANONICAL set
-    d = np.array([c["d"] for i in range(len(ds)) for c in ds[i]]).reshape(-1, 2)
+    # default seed = val_seed+1: audit the CANONICAL set
+    dhist_worker = functools.partial(_refiner_dhist_worker, RefinerVal, syn["refiner_val_composites"])
+    crop_lists = _run_pool(dhist_worker, range(syn["refiner_val_composites"]), cfg, bg_files, workers,
+                            chunksize=8)
+    d = np.array([c["d"] for crops in crop_lists for c in crops]).reshape(-1, 2)
     edges = np.linspace(-3.9375, 3.9375, 9)
     dx_frac, dx_ok = _bin_gate(d[:, 0], edges, 0.25)
     dy_frac, dy_ok = _bin_gate(d[:, 1], edges, 0.25)
@@ -228,18 +336,15 @@ def _gate_refiner(RefinerVal, generate_sample, cut_refiner_crops, cfg, bg_files,
     fig.savefig(out / "refiner_d_hist.png"); plt.close(fig)
 
     CRIT = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-6)
-    flat = []
-    for i in range(500):
-        # val_seed+2: independent of the val_seed / val_seed+1 streams SynthVal
-        # and RefinerVal already consume, so this content-check draws its own
-        # composites rather than re-walking samples another gate already used.
-        rng = np.random.default_rng([val_seed + 2, i])
-        record, _ = generate_sample(cfg, rng, bg_files, size_mult=syn["refiner_res_mult"],
-                                     photometric=False, force_negative=False)
-        pts = [(c["x"], c["y"]) for c in record["corners"] if c["visible"]]
-        flat += cut_refiner_crops(cfg, rng, record["image"], pts)
-        if len(flat) >= 100:
-            break
+    # Always draws the full (up to) 500 composites -- the old serial
+    # early-break (stop once len(flat) >= 100) doesn't buy anything once
+    # generation is pool-parallelised, and flat[:100] below discards
+    # whatever's beyond the 100th crop either way, so the result is
+    # unaffected.
+    content_worker = functools.partial(_refiner_content_worker, generate_sample, cut_refiner_crops,
+                                        val_seed, syn["refiner_res_mult"])
+    crop_lists = _run_pool(content_worker, range(500), cfg, bg_files, workers, chunksize=8)
+    flat = [c for crops in crop_lists for c in crops]
 
     # Gate on median + p90, not max: cornerSubPix (the check's instrument, not
     # the data) is ill-conditioned on small-s crops (11x11 window vs 0.15*s
@@ -288,21 +393,22 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     val_seed = cfg["synth"]["val_seed"]
 
-    _gate_overlays(SynthVal, viz, cfg, val_seed, args.n_overlay, out)
+    _gate_overlays(generate_sample, viz, cfg, bg_files, val_seed, args.n_overlay, out, args.workers)
 
     gates = []
     dist_gates, dist_report = _gate_distributions(generate_sample, cfg, bg_files, val_seed,
-                                                   args.n_dist, out, args.save)
+                                                   args.n_dist, out, args.save, args.workers)
     gates += dist_gates
 
-    rt_ok, rt_max = _gate_roundtrip(generate_sample, board, cfg, bg_files, val_seed, args.n_roundtrip)
+    rt_ok, rt_max = _gate_roundtrip(generate_sample, board, cfg, bg_files, val_seed, args.n_roundtrip,
+                                     args.workers)
     gates.append(("round-trip max px", rt_ok))
 
     repeat_ok = _gate_repeatability(SynthVal, cfg, args.config, val_seed)
     gates.append(("repeatability (subprocess byte-identical)", repeat_ok))
 
     refiner_gates, refiner_report = _gate_refiner(RefinerVal, generate_sample, cut_refiner_crops,
-                                                   cfg, bg_files, val_seed, out)
+                                                   cfg, bg_files, val_seed, out, args.workers)
     gates += refiner_gates
 
     for name, ok in gates:

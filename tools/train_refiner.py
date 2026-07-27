@@ -159,9 +159,19 @@ def run_refiner_validation(model, loader, device):
             err_y.extend((pred_dy - d[:, 1]).tolist())
 
     errs = np.array(errs)
+    # mean/median/p95 are in 64-grid units (8 units = 1 px, u* = 31.5 + 8d);
+    # the *_px twins and the cumulative fractions exist because the mixed
+    # unit systems in this record (grid here, px in bias_vs_jitter) have
+    # already misled a reader once. Old keys kept for schema continuity.
     m03 = {"mean": float(errs.mean()) if errs.size else None,
            "median": float(np.median(errs)) if errs.size else None,
            "p95": float(np.percentile(errs, 95)) if errs.size else None,
+           "mean_px": float(errs.mean() / 8) if errs.size else None,
+           "median_px": float(np.median(errs) / 8) if errs.size else None,
+           "p95_px": float(np.percentile(errs, 95) / 8) if errs.size else None,
+           "frac_lt_0p25px": float((errs < 2.0).mean()) if errs.size else None,
+           "frac_lt_0p5px": float((errs < 4.0).mean()) if errs.size else None,
+           "frac_lt_1px": float((errs < 8.0).mean()) if errs.size else None,
            "n": int(errs.size)}
     bias = {"x": _bias_bins(np.array(all_dx), np.array(err_x)),
             "y": _bias_bins(np.array(all_dy), np.array(err_y))}

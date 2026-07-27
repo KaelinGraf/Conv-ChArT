@@ -77,6 +77,56 @@ def _octave_bucket(s_px):
     return None
 
 
+_EARLY_STOP_DEFAULTS = {"enabled": False, "patience": 3, "min_steps": 100000, "tail_gate": 0.01}
+
+
+def _early_stop_series(window, get, direction):
+    """One monitored metric's relative improvement across `window`
+    (chronological full-val entries): direction="lower" (m01 mean) or
+    "higher" (m02/m04 ratios). None if `get` is missing/None for ANY entry
+    in `window` -- an unevaluable metric (empty octave bucket, m04 before
+    dcc.pipeline is importable) drops out of the decision below rather than
+    blocking or forcing a stop."""
+    values = [get(h) for h in window]
+    if any(v is None for v in values):
+        return None
+    start, best = values[0], (min(values) if direction == "lower" else max(values))
+    if start == 0:
+        return 0.0 if best == start else float("inf")
+    return ((start - best) if direction == "lower" else (best - start)) / abs(start)
+
+
+def early_stop_should_trigger(history, step, es_cfg):
+    """Pure decision function behind the config-gated early stop
+    (cfg["train"]["early_stop"]) -- factored out so it's testable without a
+    training loop. `history` is the chronological list of full-val result
+    dicts (run_validation()'s return shape, each additionally carrying its
+    own "step") seen so far; `step` is the current global step. Stops iff,
+    over the last `patience` consecutive full-vals: (1) m01's
+    tail_frac_gt4px stayed <= tail_gate at every one, AND (2) none of the
+    monitored metrics (m01 mean, each M-02 octave ratio, m04 accuracy)
+    improved >1% relative from the window's first value to its best value
+    inside the window -- i.e. training has both plateaued and stayed inside
+    the refiner's capture range throughout."""
+    cfg = {**_EARLY_STOP_DEFAULTS, **(es_cfg or {})}
+    if not cfg["enabled"] or step < cfg["min_steps"]:
+        return False
+    patience = cfg["patience"]
+    if patience < 1 or len(history) < patience:
+        return False   # patience < 1: history[-0:] would slice the WHOLE history, not none of it
+    window = history[-patience:]
+
+    tails = [h["m01"]["tail_frac_gt4px"] for h in window]
+    if any(t is None or t > cfg["tail_gate"] for t in tails):
+        return False
+
+    series = [_early_stop_series(window, lambda h: h["m01"]["mean"], "lower")]
+    for name, _lo, _hi in OCTAVE_BINS:
+        series.append(_early_stop_series(window, lambda h, k=name: h["m02"].get(k), "higher"))
+    series.append(_early_stop_series(window, lambda h: (h["m04"] or {}).get("accuracy"), "higher"))
+    return not any(s is not None and s > 0.01 for s in series)
+
+
 def _val_targets(cfg, record):
     """Renders detector targets for one SynthVal (image, record) pair via
     dcc.targets directly -- mirrors dcc.dataset._render_detector_targets
@@ -344,8 +394,9 @@ def main():
 
     W, H = cfg["input_size"]
     n_cls = n_corners(cfg.get("board"))
-    model = DetectorNet(H, W, n_cls=n_cls).to(device, memory_format=torch.channels_last)
-    eval_model = DetectorNet(H, W, n_cls=n_cls).to(device, memory_format=torch.channels_last)
+    attend_div = cfg.get("attend_div", 16)
+    model = DetectorNet(H, W, n_cls=n_cls, attend_div=attend_div).to(device, memory_format=torch.channels_last)
+    eval_model = DetectorNet(H, W, n_cls=n_cls, attend_div=attend_div).to(device, memory_format=torch.channels_last)
 
     freeze = args.freeze_trunk or cfg.get("freeze_trunk", False)
     model.train()
@@ -412,6 +463,8 @@ def main():
                                   collate_fn=partial(_val_collate, cfg))
 
     total_steps, accum = tcfg["steps"], tcfg["accum"]
+    es_cfg = {**_EARLY_STOP_DEFAULTS, **(tcfg.get("early_stop") or {})}
+    full_val_history = []
     train_iter = iter(train_loader)
     optim.zero_grad(set_to_none=True)
     micro, accum_loss, n_samples = 0, 0.0, 0
@@ -482,6 +535,20 @@ def main():
                       retargeted_from=retargeted_from)
             print(f"[train_detector] wrote checkpoint {ckpt_path}")
             val_time += time.time() - v0
+
+            full_val_history.append({"step": step, **full_result})
+            if early_stop_should_trigger(full_val_history, step, es_cfg):
+                # An exit, not a state: nothing here (or in save_ckpt above) marks the
+                # checkpoint or cfg as early-stopped, so a later --resume from ckpt_path
+                # just continues the ordinary loop past this step, unaware it happened.
+                window = full_val_history[-es_cfg["patience"]:]
+                logger.log(step=step, early_stop={"window_steps": [h["step"] for h in window],
+                           "window": [{"step": h["step"], "m01": h["m01"], "m02": h["m02"], "m04": h["m04"]}
+                                      for h in window]})
+                print(f"[train_detector] early stop: flat and tail_frac_gt4px<={es_cfg['tail_gate']} over "
+                      f"the last {es_cfg['patience']} full-vals (steps {[h['step'] for h in window]}); "
+                      f"stopping at step {step}, checkpoint={ckpt_path}")
+                break
 
     elapsed = time.time() - t0 - val_time
     print(f"[train_detector] done: step={step} train_elapsed={elapsed:.1f}s val_elapsed={val_time:.1f}s "

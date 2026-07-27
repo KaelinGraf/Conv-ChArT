@@ -408,7 +408,7 @@ def _apply_occlusion(work, rng, occ, w2, h2):
     return holes
 
 
-def _apply_photometric(work, rng, ph, w2, h2):
+def _apply_photometric(work, rng, ph, w2, h2, window_origin=None):
     """SD-03 photometric set, in the pinned order; each gated by its own
     probability. Returns the (possibly reassigned, cv2 ops are not in-place)
     float32 array; caller clips/casts to uint8 afterwards. Slice B5 adds two
@@ -416,7 +416,22 @@ def _apply_photometric(work, rng, ph, w2, h2):
     Deep ChArUco paper's own Table 1 term) right after the gaussian blur, and
     contrast (the reference pipeline's only contrast source, dropped when
     this file replaced it) right after brightness -- both conditional draws,
-    so turning either on shifts every rng call downstream of it."""
+    so turning either on shifts every rng call downstream of it.
+
+    window_origin (dcc.refiner_data's fast refiner-crop arm only; every
+    other caller leaves it None) marks `work` as a (w2, h2)-canvas WINDOW
+    rather than the full canvas: `work`'s own shape gives the patch's real
+    dims (used to size the per-pixel noise/speckle/mult fields and ghost's
+    warp output -- byte-identical to before when work.shape == (h2, w2), as
+    for every non-None-window_origin caller); w2/h2 stay the FULL virtual
+    canvas the position-dependent fields (glare's centre draw, its mgrid) are
+    drawn/evaluated over, restricted to the window via window_origin's
+    (wx0, wy0) offset. Local operations (blur, ghost's shift) need no such
+    restriction: their kernel/shift extent is well within the fast arm's
+    window margin, so evaluating them on the window alone already matches
+    full-canvas evaluation at those pixels."""
+    ph_h, ph_w = work.shape[:2]
+    wx0, wy0 = (0, 0) if window_origin is None else window_origin
     if rng.random() < ph["gauss_noise_p"]:
         std = rng.uniform(*ph["noise_std"])
         work = work + rng.normal(0, std, work.shape).astype(np.float32)
@@ -436,9 +451,9 @@ def _apply_photometric(work, rng, ph, w2, h2):
         work = cv2.GaussianBlur(work, (k, k), 0)
     if rng.random() < ph["speckle_p"]:
         std = rng.uniform(*ph["speckle_std"])
-        work = work * (1 + rng.normal(0, std, (h2, w2, 1)).astype(np.float32))
+        work = work * (1 + rng.normal(0, std, (ph_h, ph_w, 1)).astype(np.float32))
     if rng.random() < ph["mult_noise_p"]:
-        field = rng.uniform(*ph["mult_noise_range"], size=(h2, w2, 1)).astype(np.float32)
+        field = rng.uniform(*ph["mult_noise_range"], size=(ph_h, ph_w, 1)).astype(np.float32)
         work = work * field
     if rng.random() < ph["brightness_p"]:
         b = rng.uniform(*ph["brightness_range"])
@@ -463,7 +478,7 @@ def _apply_photometric(work, rng, ph, w2, h2):
         ax, ay = rng.uniform(20, 120), rng.uniform(20, 120)
         ang = rng.uniform(0, np.pi)
         peak = rng.uniform(40, 200)
-        ys, xs = np.mgrid[0:h2, 0:w2].astype(np.float32)
+        ys, xs = np.mgrid[wy0:wy0 + ph_h, wx0:wx0 + ph_w].astype(np.float32)
         xr = (xs - cx) * np.cos(ang) + (ys - cy) * np.sin(ang)
         yr = -(xs - cx) * np.sin(ang) + (ys - cy) * np.cos(ang)
         glare = peak * np.exp(-0.5 * ((xr / ax) ** 2 + (yr / ay) ** 2))
@@ -475,7 +490,7 @@ def _apply_photometric(work, rng, ph, w2, h2):
         dx, dy = mag * np.cos(ang), mag * np.sin(ang)
         blurred = cv2.GaussianBlur(work, (3, 3), 0)
         Mshift = np.array([[1, 0, dx], [0, 1, dy]], dtype=np.float64)
-        shifted = cv2.warpAffine(blurred, Mshift, (w2, h2), flags=cv2.INTER_LINEAR,
+        shifted = cv2.warpAffine(blurred, Mshift, (ph_w, ph_h), flags=cv2.INTER_LINEAR,
                                   borderMode=cv2.BORDER_REFLECT)
         work = (1 + alpha) * work - alpha * shifted
     return work

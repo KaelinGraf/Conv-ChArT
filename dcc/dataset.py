@@ -10,6 +10,7 @@ import yaml
 from torch.utils.data import Dataset, IterableDataset, get_worker_info
 
 from dcc.board import n_corners
+from dcc.refiner_data import mixed_refiner_crops
 from dcc.synth import cut_refiner_crops, generate_sample, list_backgrounds, make_generic_crop
 from dcc.targets import render_class_targets, render_heatmap, render_refiner_target
 
@@ -52,9 +53,11 @@ def _maybe_replace_generic(crop, rng, frac):
 
 class SynthStream(IterableDataset):
     """Infinite on-the-fly stream. stream='detector' yields whole composites
-    at cfg["input_size"]; stream='refiner' generates a refiner_res_mult-x
-    composite per iteration and yields its crops one at a time -- each
-    optionally swapped for a synthetic generic-corner crop, per
+    at cfg["input_size"]; stream='refiner' draws dcc.refiner_data's mixed
+    arm per iteration (fast local-window crops most of the time, an
+    occasional full refiner_res_mult-x composite + harvest for distribution
+    insurance -- see synth.refiner_full_frac) and yields its crops one at a
+    time -- each optionally swapped for a synthetic generic-corner crop, per
     synth.refiner_generic_frac (see _maybe_replace_generic)."""
 
     def __init__(self, cfg, stream="detector", seed=None, render_targets=False):
@@ -77,13 +80,9 @@ class SynthStream(IterableDataset):
                 else:
                     yield record["image"], record
         else:
-            size_mult = self.cfg["synth"]["refiner_res_mult"]
             frac = self.cfg["synth"].get("refiner_generic_frac", 0.0)
             while True:
-                record, _ = generate_sample(self.cfg, rng, bg_files, size_mult=size_mult,
-                                             occlude=False, force_negative=False)
-                pts = [(c["x"], c["y"]) for c in record["corners"] if c["visible"]]
-                for crop in cut_refiner_crops(self.cfg, rng, record["image"], pts):
+                for crop in mixed_refiner_crops(self.cfg, rng, bg_files):
                     crop = _maybe_replace_generic(crop, rng, frac)
                     yield _render_refiner_sample(crop) if self.render_targets else crop
 

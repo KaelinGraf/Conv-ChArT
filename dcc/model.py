@@ -167,30 +167,58 @@ class DetectorNet(nn.Module):
     pool, rope, blocks, norm, gate4, gate3, d4, d3, d2, d1, hm, cls) are a
     stable contract: freeze_trunk and checkpoint transfer key off them.
 
+    attend_div selects the encoder depth / attention grid: 16 (default) is
+    this native 5-stage shape unchanged bit-for-bit (existing checkpoints
+    load as before). 8 is the 4-stage variant sized for 640x480 input: e1..e4
+    (widths 32-64-128-256, the dilated rate-2,4 pair moves into e4 as the
+    now-deepest stage), attention over the H/8 grid, a single gate3 on the
+    e3 skip fed directly by the bottleneck output, decoder d3..d1 -- e5, d4
+    and gate4 simply don't exist as modules in this mode. Everything else
+    (RoPE construction, gate/head shapes, inits) is identical between the
+    two; the H/4 class tap and full-res heatmap tap are unaffected because
+    both variants' decoders reach those rungs the same way.
+
     A few choices below are convention rather than hard requirements, and
     can be revisited without breaking the contract above: MLP ratio 4 (timm
     Block default); single 3x3 conv per decoder stage; trailing LayerNorm
     after the blocks; RoPE frequencies geometric per axis (wavelength- rather
     than base-anchored here, see AxialRoPE)."""
 
-    def __init__(self, h, w, d=256, heads=8, n_blocks=2, rope_lambda_min=2.5, n_cls=16):
+    def __init__(self, h, w, d=256, heads=8, n_blocks=2, rope_lambda_min=2.5, n_cls=16, attend_div=16):
         super().__init__()
+        assert attend_div in (8, 16), f"attend_div must be 8 or 16, got {attend_div}"
+        # /16 kept for both variants, not just the native one: attend_div=8's own
+        # pool/attention chain only needs h,w % 8 == 0, but every config so far
+        # (default.yaml, rev640.yaml) is meant to be usable by either variant
+        # interchangeably, and %16 is the stricter (hence safe-for-both) bound.
         assert h % 16 == 0 and w % 16 == 0, f"h, w must be multiples of 16, got {(h, w)}"
+        self.attend_div = attend_div
         self.pool = nn.MaxPool2d(2)
         self.e1 = double_conv(1, 32)
         self.e2 = double_conv(32, 64)
         self.e3 = double_conv(64, 128)
-        self.e4 = double_conv(128, 256)
-        self.e5 = nn.Sequential(double_conv(256, 256),
-                                conv_bn_relu(256, 256, dilation=2),
-                                conv_bn_relu(256, 256, dilation=4))    # H/16
-        self.rope = AxialRoPE(d // heads, h // 16, w // 16, rope_lambda_min)
+        if attend_div == 16:
+            self.e4 = double_conv(128, 256)
+            self.e5 = nn.Sequential(double_conv(256, 256),
+                                    conv_bn_relu(256, 256, dilation=2),
+                                    conv_bn_relu(256, 256, dilation=4))    # H/16
+            grid_h, grid_w = h // 16, w // 16
+        else:  # attend_div == 8: dilated pair moves into e4 (now the deepest stage), no e5
+            self.e4 = nn.Sequential(double_conv(128, 256),
+                                    conv_bn_relu(256, 256, dilation=2),
+                                    conv_bn_relu(256, 256, dilation=4))    # H/8
+            grid_h, grid_w = h // 8, w // 8
+        self.rope = AxialRoPE(d // heads, grid_h, grid_w, rope_lambda_min)
         self.blocks = nn.ModuleList(Block(d, heads, self.rope) for _ in range(n_blocks))
         self.norm = nn.LayerNorm(d, eps=1e-6)  # eps per timm/TransUNet refs
-        self.gate4 = AttnGate(256, 256, 128)     # gates enc4 (H/8) skip w/ bottleneck z
-        self.gate3 = AttnGate(128, 256, 64)      # gates enc3 (H/4) skip w/ d4's output
-        self.d4 = conv_bn_relu(256 + 256, 256)   # H/16 -> H/8
-        self.d3 = conv_bn_relu(256 + 128, 128)   # H/8  -> H/4
+        if attend_div == 16:
+            self.gate4 = AttnGate(256, 256, 128)     # gates enc4 (H/8) skip w/ bottleneck z
+            self.gate3 = AttnGate(128, 256, 64)      # gates enc3 (H/4) skip w/ d4's output
+            self.d4 = conv_bn_relu(256 + 256, 256)   # H/16 -> H/8
+            self.d3 = conv_bn_relu(256 + 128, 128)   # H/8  -> H/4
+        else:
+            self.gate3 = AttnGate(128, 256, 64)      # gates enc3 (H/4) skip w/ bottleneck z (H/8 is the bottleneck here)
+            self.d3 = conv_bn_relu(256 + 128, 128)   # H/8  -> H/4
         self.d2 = conv_bn_relu(128 + 64, 64)     # H/4  -> H/2
         self.d1 = conv_bn_relu(64 + 32, 32)      # H/2  -> H
         self.hm = nn.Sequential(nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(inplace=True),
@@ -204,15 +232,21 @@ class DetectorNet(nn.Module):
         s1 = self.e1(x)
         s2 = self.e2(self.pool(s1))
         s3 = self.e3(self.pool(s2))
-        s4 = self.e4(self.pool(s3))
-        z = self.e5(self.pool(s4))              # (B, 256, H/16, W/16)
+        if self.attend_div == 16:
+            s4 = self.e4(self.pool(s3))
+            z = self.e5(self.pool(s4))          # (B, 256, H/16, W/16)
+        else:
+            z = self.e4(self.pool(s3))          # (B, 256, H/8, W/8)
         B, C, Hb, Wb = z.shape
         t = z.flatten(2).transpose(1, 2)        # (B, T, d) row-major tokens
         for blk in self.blocks:
             t = blk(t)
         z = self.norm(t).transpose(1, 2).reshape(B, C, Hb, Wb)
-        y = self.d4(torch.cat([up2(z), self.gate4(s4, z)], 1))   # H/8
-        y = self.d3(torch.cat([up2(y), self.gate3(s3, y)], 1))   # H/4
+        if self.attend_div == 16:
+            y = self.d4(torch.cat([up2(z), self.gate4(s4, z)], 1))   # H/8
+            y = self.d3(torch.cat([up2(y), self.gate3(s3, y)], 1))   # H/4
+        else:
+            y = self.d3(torch.cat([up2(z), self.gate3(s3, z)], 1))   # H/4
         cls = self.cls(y)                       # class head taps the H/4 rung
         y = self.d2(torch.cat([up2(y), s2], 1))                  # H/2, ungated skip
         y = self.d1(torch.cat([up2(y), s1], 1))                  # H,  ungated skip

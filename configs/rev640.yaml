@@ -123,7 +123,7 @@ train:
   wd: 1.0e-4
   clip_norm: 5.0
   ema_decay: 0.999
-  workers: 16   # 12->16 at rev-3 restart: per-frame differencing noise dropped single-proc generation to 9.6 samples/s (~115 agg x12 < GPU's ~121) -- measured 2026-07-28
+  workers: 12   # back to 12 after the 16-worker config crashed the machine (2026-07-28: 62GiB RAM, ~32 torch loader processes exhausted it); Kaelin accepts the mild loader bottleneck (~115 agg vs GPU's ~121)
   prefetch_factor: 4
   val_every: 2500
   full_val_every: 25000

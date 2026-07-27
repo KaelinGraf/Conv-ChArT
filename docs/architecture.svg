@@ -1,0 +1,245 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="900" viewBox="0 0 1520 900" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="aGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#555555"/>
+    </marker>
+    <marker id="aGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#55A868"/>
+    </marker>
+    <marker id="aOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#E58606"/>
+    </marker>
+    <marker id="aPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7B5EA7"/>
+    </marker>
+    <marker id="aRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#C44E52"/>
+    </marker>
+    <marker id="aTeal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2E8B74"/>
+    </marker>
+    <marker id="aDark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333333"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1520" height="900" fill="#ffffff"/>
+  <text x="760" y="30" text-anchor="middle" font-size="17" fill="#222222" font-weight="bold">Conv-ChArT detector — hybrid convolutional–transformer architecture</text>
+
+  <!-- input -->
+  <rect x="90" y="42" width="200" height="24" rx="4" fill="#f2f2f2" stroke="#999999"/>
+  <text x="190" y="58" text-anchor="middle" font-size="11.5" fill="#333333">input · grayscale 1 × 1600 × 1200</text>
+  <line x1="190" y1="66" x2="190" y2="78" stroke="#555555" stroke-width="1.6" marker-end="url(#aGray)"/>
+
+  <!-- ================= encoder column ================= -->
+  <g stroke="#4C72B0" fill="#dbe9f6" stroke-width="1.6">
+    <rect x="90" y="80" width="200" height="58" rx="6"/>
+    <rect x="90" y="178" width="200" height="58" rx="6"/>
+    <rect x="90" y="276" width="200" height="58" rx="6"/>
+    <rect x="90" y="374" width="200" height="58" rx="6"/>
+    <rect x="90" y="505" width="200" height="58" rx="6" stroke-dasharray="6 3"/>
+  </g>
+  <g font-size="12.5" fill="#1d3d63" text-anchor="middle">
+    <text x="190" y="103" font-weight="bold">e1 · [conv3×3 + BN + ReLU] ×2</text>
+    <text x="190" y="121" font-size="11" fill="#44618a">H × W · 32 ch</text>
+    <text x="190" y="201" font-weight="bold">e2 · [conv3×3 + BN + ReLU] ×2</text>
+    <text x="190" y="219" font-size="11" fill="#44618a">H/2 · 64 ch</text>
+    <text x="190" y="299" font-weight="bold">e3 · [conv3×3 + BN + ReLU] ×2</text>
+    <text x="190" y="317" font-size="11" fill="#44618a">H/4 · 128 ch</text>
+    <text x="190" y="397" font-weight="bold">e4 · [conv3×3 + BN + ReLU] ×2</text>
+    <text x="190" y="415" font-size="11" fill="#44618a">H/8 · 256 ch</text>
+    <text x="190" y="528" font-weight="bold">e5 · dilated conv ×2 (r = 2, 4)</text>
+    <text x="190" y="546" font-size="11" fill="#44618a">H/16 · 256 ch</text>
+  </g>
+  <!-- encoder downsampling arrows -->
+  <g stroke="#555555" stroke-width="1.6">
+    <line x1="190" y1="138" x2="190" y2="176" marker-end="url(#aGray)"/>
+    <line x1="190" y1="236" x2="190" y2="274" marker-end="url(#aGray)"/>
+    <line x1="190" y1="334" x2="190" y2="372" marker-end="url(#aGray)"/>
+    <line x1="190" y1="432" x2="190" y2="503" marker-end="url(#aGray)"/>
+  </g>
+  <g font-size="10.5" fill="#666666">
+    <text x="198" y="161">maxpool ↓2</text>
+    <text x="198" y="259">maxpool ↓2</text>
+    <text x="198" y="357">maxpool ↓2</text>
+    <text x="198" y="472">maxpool ↓2</text>
+  </g>
+
+  <!-- ================= bottleneck ================= -->
+  <line x1="290" y1="534" x2="388" y2="534" stroke="#7B5EA7" stroke-width="1.8" marker-end="url(#aPurple)"/>
+  <text x="339" y="524" text-anchor="middle" font-size="10.5" fill="#7B5EA7">reshape → tokens</text>
+
+  <rect x="390" y="472" width="336" height="124" rx="8" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.8"/>
+  <text x="558" y="492" text-anchor="middle" font-size="12.5" fill="#4b3573" font-weight="bold">transformer bottleneck ×2 (pre-norm)</text>
+  <!-- inner residual rows -->
+  <rect x="404" y="500" width="220" height="26" rx="4" fill="#ffffff" stroke="#a08cc4" stroke-width="1"/>
+  <text x="514" y="517" text-anchor="middle" font-size="10.5" fill="#4b3573">LN → MHSA · 8 heads · 2D axial RoPE</text>
+  <circle cx="648" cy="513" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
+  <text x="648" y="517.5" text-anchor="middle" font-size="12" fill="#4b3573">+</text>
+  <line x1="624" y1="513" x2="636" y2="513" stroke="#4b3573" stroke-width="1.2" marker-end="url(#aPurple)"/>
+  <rect x="404" y="536" width="220" height="26" rx="4" fill="#ffffff" stroke="#a08cc4" stroke-width="1"/>
+  <text x="514" y="553" text-anchor="middle" font-size="10.5" fill="#4b3573">LN → MLP (ratio 4)</text>
+  <circle cx="648" cy="549" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
+  <text x="648" y="553.5" text-anchor="middle" font-size="12" fill="#4b3573">+</text>
+  <line x1="624" y1="549" x2="636" y2="549" stroke="#4b3573" stroke-width="1.2" marker-end="url(#aPurple)"/>
+  <text x="558" y="584" text-anchor="middle" font-size="10.5" fill="#6a5a8e">tokens = H/16 grid = 100 × 75 = 7 500 · d = 256 · residual adds ⊕</text>
+
+  <rect x="746" y="505" width="56" height="58" rx="6" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.6"/>
+  <text x="774" y="538" text-anchor="middle" font-size="12" fill="#4b3573" font-weight="bold">LN</text>
+  <line x1="726" y1="534" x2="744" y2="534" stroke="#7B5EA7" stroke-width="1.8" marker-end="url(#aPurple)"/>
+
+  <!-- bottleneck up to decoder d4 -->
+  <polyline points="802,534 900,534 900,403 915,403" fill="none" stroke="#55A868" stroke-width="1.8" marker-end="url(#aGreen)"/>
+  <text x="916" y="470" font-size="10.5" fill="#55A868" transform="rotate(-90 916 470)">bilinear ↑2</text>
+
+  <!-- ================= skips, gates, concats ================= -->
+  <!-- concat circles at x=930, row centres y=109/207/305/403 -->
+  <g fill="#ffffff" stroke="#333333" stroke-width="1.5">
+    <circle cx="930" cy="109" r="13"/>
+    <circle cx="930" cy="207" r="13"/>
+    <circle cx="930" cy="305" r="13"/>
+    <circle cx="930" cy="403" r="13"/>
+  </g>
+  <g font-size="12" fill="#333333" text-anchor="middle" font-weight="bold">
+    <text x="930" y="113.5">C</text>
+    <text x="930" y="211.5">C</text>
+    <text x="930" y="309.5">C</text>
+    <text x="930" y="407.5">C</text>
+  </g>
+
+  <!-- ungated skips (rows H, H/2) -->
+  <line x1="290" y1="109" x2="914" y2="109" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+  <line x1="290" y1="207" x2="914" y2="207" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+  <text x="600" y="99" text-anchor="middle" font-size="10.5" fill="#E58606">skip (ungated)</text>
+  <text x="600" y="197" text-anchor="middle" font-size="10.5" fill="#E58606">skip (ungated)</text>
+
+  <!-- gated skips (rows H/4, H/8) -->
+  <line x1="290" y1="305" x2="553" y2="305" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+  <rect x="555" y="283" width="96" height="44" rx="8" fill="#fff2cc" stroke="#D8A400" stroke-width="1.8"/>
+  <text x="603" y="301" text-anchor="middle" font-size="11.5" fill="#7a5c00" font-weight="bold">AG₃ · α·x</text>
+  <text x="603" y="317" text-anchor="middle" font-size="9.5" fill="#7a5c00">attention gate</text>
+  <line x1="651" y1="305" x2="914" y2="305" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+
+  <line x1="290" y1="403" x2="553" y2="403" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+  <rect x="555" y="381" width="96" height="44" rx="8" fill="#fff2cc" stroke="#D8A400" stroke-width="1.8"/>
+  <text x="603" y="399" text-anchor="middle" font-size="11.5" fill="#7a5c00" font-weight="bold">AG₄ · α·x</text>
+  <text x="603" y="415" text-anchor="middle" font-size="9.5" fill="#7a5c00">attention gate</text>
+  <line x1="651" y1="403" x2="914" y2="403" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+
+  <!-- gating signals (purple dashed): AG4 from post-attention bottleneck, AG3 from d4 -->
+  <polyline points="603,472 603,427" fill="none" stroke="#7B5EA7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#aPurple)"/>
+  <text x="611" y="453" font-size="10.5" fill="#7B5EA7">g (H/16)</text>
+  <polyline points="980,388 680,356 631,331" fill="none" stroke="#7B5EA7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#aPurple)"/>
+  <text x="742" y="349" font-size="10.5" fill="#7B5EA7">g (d4, H/8)</text>
+
+  <!-- ================= decoder column ================= -->
+  <g stroke="#4C72B0" fill="#dbe9f6" stroke-width="1.6">
+    <rect x="980" y="80" width="200" height="58" rx="6"/>
+    <rect x="980" y="178" width="200" height="58" rx="6"/>
+    <rect x="980" y="276" width="200" height="58" rx="6"/>
+    <rect x="980" y="374" width="200" height="58" rx="6"/>
+  </g>
+  <g font-size="12.5" fill="#1d3d63" text-anchor="middle">
+    <text x="1080" y="103" font-weight="bold">d1 · [conv3×3 + BN + ReLU] ×2</text>
+    <text x="1080" y="121" font-size="11" fill="#44618a">H × W · 32 ch</text>
+    <text x="1080" y="201" font-weight="bold">d2 · [conv3×3 + BN + ReLU] ×2</text>
+    <text x="1080" y="219" font-size="11" fill="#44618a">H/2 · 64 ch</text>
+    <text x="1080" y="299" font-weight="bold">d3 · [conv3×3 + BN + ReLU] ×2</text>
+    <text x="1080" y="317" font-size="11" fill="#44618a">H/4 · 128 ch</text>
+    <text x="1080" y="397" font-weight="bold">d4 · [conv3×3 + BN + ReLU] ×2</text>
+    <text x="1080" y="415" font-size="11" fill="#44618a">H/8 · 256 ch</text>
+  </g>
+  <!-- concat -> decoder block -->
+  <g stroke="#333333" stroke-width="1.6">
+    <line x1="943" y1="109" x2="978" y2="109" marker-end="url(#aDark)"/>
+    <line x1="943" y1="207" x2="978" y2="207" marker-end="url(#aDark)"/>
+    <line x1="943" y1="305" x2="978" y2="305" marker-end="url(#aDark)"/>
+    <line x1="943" y1="403" x2="978" y2="403" marker-end="url(#aDark)"/>
+  </g>
+  <!-- decoder upsampling into concat of the next-finer row -->
+  <g fill="none" stroke="#55A868" stroke-width="1.8">
+    <polyline points="1080,374 1080,340 930,340 930,320" marker-end="url(#aGreen)"/>
+    <polyline points="1080,276 1080,242 930,242 930,222" marker-end="url(#aGreen)"/>
+    <polyline points="1080,178 1080,144 930,144 930,124" marker-end="url(#aGreen)"/>
+  </g>
+  <g font-size="10.5" fill="#55A868">
+    <text x="1000" y="330">bilinear ↑2</text>
+    <text x="1000" y="232">bilinear ↑2</text>
+    <text x="1000" y="134">bilinear ↑2</text>
+  </g>
+
+  <!-- ================= heads ================= -->
+  <line x1="1180" y1="109" x2="1248" y2="109" stroke="#C44E52" stroke-width="1.8" marker-end="url(#aRed)"/>
+  <rect x="1250" y="80" width="240" height="58" rx="6" fill="#fbe0dc" stroke="#C44E52" stroke-width="1.8"/>
+  <text x="1370" y="103" text-anchor="middle" font-size="12.5" fill="#7c2a2d" font-weight="bold">heatmap head · conv3×3 → 1×1</text>
+  <text x="1370" y="121" text-anchor="middle" font-size="11" fill="#a04a4d">corner heatmap · 1 × H × W · σ</text>
+
+  <line x1="1180" y1="305" x2="1248" y2="305" stroke="#2E8B74" stroke-width="1.8" marker-end="url(#aTeal)"/>
+  <rect x="1250" y="276" width="240" height="58" rx="6" fill="#d9efe8" stroke="#2E8B74" stroke-width="1.8"/>
+  <text x="1370" y="299" text-anchor="middle" font-size="12.5" fill="#1c5747" font-weight="bold">class head · conv3×3(128) → 1×1</text>
+  <text x="1370" y="317" text-anchor="middle" font-size="11" fill="#2e7361">corner IDs · 16 × H/4 × W/4 · σ</text>
+
+  <!-- ================= legend ================= -->
+  <rect x="60" y="630" width="560" height="240" rx="8" fill="#fafafa" stroke="#cccccc"/>
+  <text x="78" y="656" font-size="12.5" fill="#333333" font-weight="bold">Legend</text>
+  <rect x="78" y="668" width="34" height="18" rx="3" fill="#dbe9f6" stroke="#4C72B0" stroke-width="1.4"/>
+  <text x="122" y="682" font-size="11" fill="#333333">conv stage: [3×3 conv + BN + ReLU] ×2 (dashed: dilated, r = 2, 4)</text>
+  <rect x="78" y="694" width="34" height="18" rx="3" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.4"/>
+  <text x="122" y="708" font-size="11" fill="#333333">transformer block: pre-norm MHSA + MLP, 2D axial RoPE on q, k</text>
+  <rect x="78" y="720" width="34" height="18" rx="3" fill="#fff2cc" stroke="#D8A400" stroke-width="1.4"/>
+  <text x="122" y="734" font-size="11" fill="#333333">attention gate: α = σ(ψᵀ ReLU(Wₓx + W_g g)), pass-through init α₀ ≈ 0.95</text>
+  <line x1="78" y1="756" x2="110" y2="756" stroke="#555555" stroke-width="1.8" marker-end="url(#aGray)"/>
+  <text x="122" y="760" font-size="11" fill="#333333">maxpool ↓2</text>
+  <line x1="238" y1="756" x2="270" y2="756" stroke="#55A868" stroke-width="1.8" marker-end="url(#aGreen)"/>
+  <text x="282" y="760" font-size="11" fill="#333333">bilinear ↑2</text>
+  <line x1="78" y1="782" x2="110" y2="782" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+  <text x="122" y="786" font-size="11" fill="#333333">skip connection</text>
+  <line x1="238" y1="782" x2="270" y2="782" stroke="#7B5EA7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#aPurple)"/>
+  <text x="282" y="786" font-size="11" fill="#333333">gating signal g</text>
+  <circle cx="94" cy="812" r="10" fill="#ffffff" stroke="#333333" stroke-width="1.4"/>
+  <text x="94" y="816.5" text-anchor="middle" font-size="10.5" fill="#333333" font-weight="bold">C</text>
+  <text x="122" y="816" font-size="11" fill="#333333">channel concat</text>
+  <circle cx="254" cy="812" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
+  <text x="254" y="816.5" text-anchor="middle" font-size="11" fill="#4b3573">+</text>
+  <text x="282" y="816" font-size="11" fill="#333333">residual add</text>
+  <rect x="78" y="834" width="16" height="14" rx="3" fill="#fbe0dc" stroke="#C44E52" stroke-width="1.2"/>
+  <rect x="98" y="834" width="16" height="14" rx="3" fill="#d9efe8" stroke="#2E8B74" stroke-width="1.2"/>
+  <text x="122" y="846" font-size="11" fill="#333333">output heads (heatmap · class); σ = sigmoid, losses on logits</text>
+
+  <!-- ================= refiner strip ================= -->
+  <rect x="660" y="630" width="830" height="240" rx="8" fill="#fafafa" stroke="#cccccc"/>
+  <text x="678" y="656" font-size="12.5" fill="#333333" font-weight="bold">Refiner (Stage 2, separate 97k-param network) — sub-pixel corner offset from a 24×24 crop</text>
+
+  <rect x="678" y="700" width="96" height="52" rx="6" fill="#f2f2f2" stroke="#999999" stroke-width="1.4"/>
+  <text x="726" y="722" text-anchor="middle" font-size="11" fill="#333333">crop @ peak</text>
+  <text x="726" y="738" text-anchor="middle" font-size="10.5" fill="#666666">24 × 24 × 1</text>
+  <line x1="774" y1="726" x2="800" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
+
+  <rect x="802" y="700" width="150" height="52" rx="6" fill="#dbe9f6" stroke="#4C72B0" stroke-width="1.4"/>
+  <text x="877" y="722" text-anchor="middle" font-size="11" fill="#1d3d63">conv3×3 ×3 + ReLU</text>
+  <text x="877" y="738" text-anchor="middle" font-size="10.5" fill="#44618a">32 → 64 → 64 ch @ 24²</text>
+  <line x1="952" y1="726" x2="978" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
+
+  <rect x="980" y="700" width="140" height="52" rx="6" fill="#eeeeee" stroke="#888888" stroke-width="1.4"/>
+  <text x="1050" y="722" text-anchor="middle" font-size="11" fill="#333333">centre-crop 8×8</text>
+  <text x="1050" y="738" text-anchor="middle" font-size="10.5" fill="#666666">on features (fixed slice)</text>
+  <line x1="1120" y1="726" x2="1146" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
+
+  <rect x="1148" y="700" width="90" height="52" rx="6" fill="#dbe9f6" stroke="#4C72B0" stroke-width="1.4"/>
+  <text x="1193" y="722" text-anchor="middle" font-size="11" fill="#1d3d63">3×3 → 1×1</text>
+  <text x="1193" y="738" text-anchor="middle" font-size="10.5" fill="#44618a">→ 64 ch</text>
+  <line x1="1238" y1="726" x2="1264" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
+
+  <rect x="1266" y="700" width="110" height="52" rx="6" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.4"/>
+  <text x="1321" y="722" text-anchor="middle" font-size="11" fill="#4b3573">PixelShuffle ×8</text>
+  <text x="1321" y="738" text-anchor="middle" font-size="10.5" fill="#6a5a8e">8×8×64 → 64×64</text>
+  <line x1="1376" y1="726" x2="1402" y2="726" stroke="#C44E52" stroke-width="1.5" marker-end="url(#aRed)"/>
+
+  <rect x="1404" y="700" width="72" height="52" rx="6" fill="#fbe0dc" stroke="#C44E52" stroke-width="1.4"/>
+  <text x="1440" y="722" text-anchor="middle" font-size="11" fill="#7c2a2d">64 × 64</text>
+  <text x="1440" y="738" text-anchor="middle" font-size="10.5" fill="#a04a4d">logits · σ</text>
+
+  <text x="678" y="790" font-size="11" fill="#555555">The 64×64 map covers only the central ±4 px capture window at 8× sub-pixel resolution (1/8-px cells); the surrounding</text>
+  <text x="678" y="808" font-size="11" fill="#555555">16-px ring is context via receptive fields, not answer space. Decode: soft-argmax over a 5×5 window around the peak →</text>
+  <text x="678" y="826" font-size="11" fill="#555555">offset d ∈ [−3.94, +3.94] px; refined corner = crop centre + d. Trained separately on jittered crops (d ~ U over support).</text>
+</svg>

@@ -8,6 +8,8 @@ This repository is a from-scratch implementation: every architectural and numeri
 
 ## Architecture
 
+![Conv-ChArT architecture](docs/architecture.svg)
+
 Three stages. Stage 1 detects corners and reads identities from a single network. Stage 2 refines each corner to sub-pixel on the native sensor crop. Stage 3 turns detections into a pose through a lattice-consistency gate and classical PnP.
 
 ```

@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+runs/
+sheets/
+audit/
+introspect_out/
+*.pt
+*.onnx
+# internal working notes and source specs -- not part of the public tree
+spec/
+memory.md
+ablations.md

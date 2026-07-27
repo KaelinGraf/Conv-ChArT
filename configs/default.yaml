@@ -1,0 +1,101 @@
+input_size: [1600, 1200]   # native OV2311 4:3 crop, rho = 1 (Kaelin 2026-07-27)        # (W, H) network input
+sigma_hm: 2.0
+sigma_cls: 1.0
+alpha: 2
+beta: 4
+lambda_cls: 1.0
+tau_hm: 0.3
+tau_id: 0.5
+lattice_tol_px: 3.0
+negative_p: 0.05
+scale_range_px: [12, 128]     # s at input, log-uniform; floor 16->12 (Kaelin 2026-07-27: "furthest should be a bit further away") -- markers are unreadable below ~16, corners still learnable
+refiner_jitter_px: 4
+freeze_trunk: false
+attn_blocks: 2                  # MHSA+MLP at bottleneck (MT-01)
+attn_heads: 8
+rope_lambda_min_cells: 2.5       # replaces MT-06's rope_base: standard-RoPE base can't reach the spec's own 2-cell short end at a useful long end; wavelength-anchoring can (nudged 2->2.5 to clear the Nyquist degeneracy), signed off 2026-07-27
+board:
+  squares: [5, 5]
+  dictionary: DICT_5X5_50
+  marker_ids: [0, 11]
+  marker_ratio: 0.7
+  square_length_m: null
+synth:
+  render_res: 480
+  backgrounds: /home/kaelin/datasets/coco/train2017
+  val_seed: 1000
+  train_seed: 2000
+  pose_seed: 3000
+  val_size: 10000
+  refiner_res_mult: 1   # rho = 1: sensor frame IS the input frame (SD-07 "2x" assumed rho>=2; signed off 2026-07-27)
+  refiner_max_corners: 8
+  refiner_val_composites: 1250
+  refiner_generic_frac: 0.0   # Slice B5 task #6: optional synthetic-junction refiner-crop blend, off by default (spec-literal SD-07)
+  rot_deg: 180
+  shear_deg: 35
+  translate_frac: 0.45
+  perspective_p: 0.8
+  tilt_max_deg: 60
+  fov_scale: [0.7, 1.4]
+  bg_hflip_p: 0.5
+  prefilter:   # Slice B5 task #7: anti-alias blur before warpPerspective minifies the board render
+    enabled: true
+    k: 0.5
+  occlusion:
+    p: 0.4
+    holes: [1, 6]
+    size: [16, 64]
+  cutouts:
+    path: /home/kaelin/datasets/cutouts
+    p: 0.35
+    max_objects: 3
+    scale: [0.08, 0.5]
+  photometric:
+    gauss_noise_p: 0.5
+    noise_std: [3.2, 7.1]
+    motion_blur_p: 0.5
+    motion_blur_kmax: 5
+    gauss_blur_p: 0.25
+    speckle_p: 0.5   # Slice B5 task #12: Deep ChArUco Table 1's speckle term
+    speckle_std: [0.03, 0.12]
+    mult_noise_p: 0.5
+    mult_noise_range: [0.95, 1.05]
+    brightness_p: 0.5
+    brightness_range: [-0.98, 0.35]   # floor -0.8->-0.98 (Kaelin 2026-07-27): deepest draws must crush the BOARD below human perceptibility (white square -> <=5/255), not just the background; the differencing camera's underexposure failure mode
+    brightness_add_floor: -0.96       # additive branch only (Kaelin 2026-07-27 "there needs to be SOME signal"): unclamped, additive b<-0.965 wipes whole frames to all-zero with positive labels, contradicting the negative stream; -0.96 keeps >=10/255 of white-point. Multiplicative branch scales, never wipes, so it keeps the full range.
+    contrast_p: 0.5   # Slice B5 task #12: reference pipeline's only contrast source, restored
+    contrast_range: [0.8, 1.2]
+    rgb_shift_p: 0.5
+    rgb_shift_limit: 20
+    glare_p: 0.3
+    ghost_p: 0.25
+    ghost_alpha: [0.1, 0.5]
+    ghost_shift_px: [1, 4]
+train:
+  batch: 4
+  accum: 8
+  steps: 250000
+  lr: 3.0e-4
+  lr_floor: 3.0e-6
+  warmup_steps: 1000
+  wd: 1.0e-4
+  clip_norm: 5.0
+  ema_decay: 0.999
+  workers: 12
+  prefetch_factor: 4
+  val_every: 2500
+  full_val_every: 25000
+  val_subset: 2000
+  match_px: 8.0
+  tau_hm: 0.3
+refiner_train:
+  batch: 256
+  steps: 10000
+  lr: 1.0e-3
+  lr_floor: 1.0e-5
+  warmup_steps: 200
+  wd: 1.0e-4
+  clip_norm: 5.0
+  ema_decay: 0.999
+  workers: 12
+  val_every: 1000

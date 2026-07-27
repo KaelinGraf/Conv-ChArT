@@ -1,4 +1,4 @@
-# ConChArT — Tooling Reference
+# Conv-ChArT — Tooling Reference
 
 Full CLI reference for every script under `tools/`. All commands assume `cwd = dense deep charuco/` (quote the space), the `MLWS` conda environment, and `PYTHONPATH=` cleared (see the root `README.md`'s Environment section for why both matter). Every tool inserts the project root onto `sys.path[0]` itself and must be invoked as a script — `python tools/<name>.py ...` — never `import tools.*` or `python -m tools.<name>` (the machine-wide `tools`-package shadow from an unrelated `detectron2` checkout). Argparse in every tool runs before any heavy import, so `--help` never needs `dcc`/`numpy`/`cv2`/`torch`/`matplotlib` and is safe to run in any environment with a bare Python 3.
 

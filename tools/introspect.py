@@ -53,8 +53,8 @@ def _load_ckpt(model, path, device):
     return True
 
 
-def _build_module(cls, ckpt, device, *ctor_args):
-    m = cls(*ctor_args).to(device).eval()
+def _build_module(cls, ckpt, device, *ctor_args, **ctor_kwargs):
+    m = cls(*ctor_args, **ctor_kwargs).to(device).eval()
     return m, _load_ckpt(m, ckpt, device)
 
 
@@ -275,8 +275,9 @@ def panel_attention(model, x, image, args, out, tag, suptitle, dpi, show):
         return
     prob = torch.sigmoid(hm_logits)[0, 0].cpu().numpy()
     qx, qy = _peak_or_query(args, prob)
-    gh, gw = H // 16, W // 16
-    tok = int(np.clip(qy // 16, 0, gh - 1)) * gw + int(np.clip(qx // 16, 0, gw - 1))
+    div = model.attend_div   # grid stride: 16 native, 8 for the attend_div=8 variant
+    gh, gw = H // div, W // div
+    tok = int(np.clip(qy // div, 0, gh - 1)) * gw + int(np.clip(qx // div, 0, gw - 1))
 
     n = len(blk_in)
     fig = plt.figure(figsize=(16, 5.5 * n))
@@ -400,7 +401,7 @@ def main():
         matplotlib.use("Agg")
     import torch
     try:
-        from dcc.model import DetectorNet
+        from dcc.model import DetectorNet, detector_kwargs
     except ImportError as e:
         print(f"dcc.model not importable yet ({e}) -- introspect.py cannot run any panel without it "
               f"(py_compile/--help are unaffected).")
@@ -411,7 +412,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     image, tag = _sample(cfg, args)
     W, H = cfg["input_size"]
-    model, trained = _build_module(DetectorNet, args.ckpt, device, H, W)
+    model, trained = _build_module(DetectorNet, args.ckpt, device, H, W, **detector_kwargs(cfg))
     x = torch.from_numpy(image).float().div(255.0).unsqueeze(0).unsqueeze(0).to(device)
     suptitle = _suptitle(args.ckpt, tag, trained)
     out = Path(args.out)
@@ -428,7 +429,7 @@ def main():
     if "erf" in requested:
         model_b, suptitle_b = None, None
         if args.ckpt_b:
-            model_b, b_trained = _build_module(DetectorNet, args.ckpt_b, device, H, W)
+            model_b, b_trained = _build_module(DetectorNet, args.ckpt_b, device, H, W, **detector_kwargs(cfg))
             suptitle_b = _suptitle(args.ckpt_b, tag, b_trained)
         panel_erf(model, x, image, args, out, tag, suptitle, args.dpi, args.show, model_b, suptitle_b)
     if "features" in requested:

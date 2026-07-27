@@ -102,7 +102,7 @@ train:
   early_stop:
     enabled: true
     patience: 3
-    min_steps: 100000
+    min_steps: 162000
     tail_gate: 0.01
 refiner_train:
   batch: 256

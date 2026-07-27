@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import yaml
 
-from dcc.board import render_board
+from dcc.board import get_board, render_board
 from dcc.targets import render_class_targets, render_heatmap
 from dcc.synth import _apply_photometric, cut_refiner_crops, generate_sample, make_generic_crop, place_cutout, visible
 from dcc.dataset import _maybe_replace_generic, RefinerVal, SynthVal
@@ -65,14 +65,15 @@ def cfg(bg_files):
     return c
 
 
-def _recompose_H(comp, render_res, w2, h2):
+def _recompose_H(comp, render_res, w2, h2, nx):
     """Independent inline re-derivation of DS-07/SD-02 Rev C's full 3x3
     homography, from the reported components alone -- does not call
-    anything in dcc.synth."""
+    anything in dcc.synth. nx is the board's per-side square count
+    (SQ = render_res // nx)."""
     s, theta = comp["s"], comp["theta"]
     shx, shy = comp["shear_x"], comp["shear_y"]
     tx, ty = comp["tx"], comp["ty"]
-    SQ = render_res // 5
+    SQ = render_res // nx
     R = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
     Sh = np.array([[1.0, np.tan(shx)], [np.tan(shy), 1.0]])
     A = (s / SQ) * (R @ Sh)
@@ -95,6 +96,7 @@ def _recompose_H(comp, render_res, w2, h2):
 def test_warp_roundtrip(cfg, bg_files):
     render_res = cfg["synth"]["render_res"]
     W, H = cfg["input_size"]
+    nx = get_board(cfg.get("board"))[1]
     analytic = render_board(render_res)[1]
 
     max_err = 0.0
@@ -103,7 +105,7 @@ def test_warp_roundtrip(cfg, bg_files):
         s = rng.uniform(16, 128)
         record, meta = generate_sample(cfg, rng, bg_files, s=s, photometric=False, occlude=False,
                                         force_negative=False)
-        H2 = _recompose_H(meta["components"], render_res, W, H)
+        H2 = _recompose_H(meta["components"], render_res, W, H, nx)
         assert np.allclose(H2, meta["M"], atol=1e-9)
         hom = np.hstack([analytic, np.ones((16, 1))]) @ H2.T
         recomposed = hom[:, :2] / hom[:, 2:3]
@@ -170,7 +172,8 @@ def test_perspective_calibration(cfg):
     """
     render_res = cfg["synth"]["render_res"]
     W, H = cfg["input_size"]
-    SQ = render_res // 5
+    nx = get_board(cfg.get("board"))[1]
+    SQ = render_res // nx
     cr = (render_res - 1) / 2
     c_in = np.array([(W - 1) / 2, (H - 1) / 2])
     zero6 = {"theta": 0.0, "shear_x": 0.0, "shear_y": 0.0, "tx": 0.0, "ty": 0.0}
@@ -180,7 +183,7 @@ def test_perspective_calibration(cfg):
         # above) with the affine's 6 DoF pinned to identity/zero so only the
         # scale + perspective factor under test is exercised.
         return _recompose_H({**zero6, "s": s, "tilt": tau, "psi": psi, "fov_scale": fov_scale},
-                             render_res, W, H)
+                             render_res, W, H, nx)
 
     def pinhole_H(psi, tau, s, fov_scale):
         f = fov_scale * W
@@ -259,6 +262,7 @@ def test_perspective_foreshortening(cfg, bg_files):
     recomposition."""
     render_res = cfg["synth"]["render_res"]
     W, H = cfg["input_size"]
+    nx = get_board(cfg.get("board"))[1]
 
     rng = np.random.default_rng(71)
     record, meta = generate_sample(cfg, rng, bg_files, s=64.0, force_negative=False,
@@ -286,7 +290,7 @@ def test_perspective_foreshortening(cfg, bg_files):
     assert H0[2, 0] == 0.0 and H0[2, 1] == 0.0 and H0[2, 2] == 1.0
 
     comp = meta0["components"]
-    SQ = render_res // 5
+    SQ = render_res // nx
     R = np.array([[np.cos(comp["theta"]), -np.sin(comp["theta"])],
                   [np.sin(comp["theta"]), np.cos(comp["theta"])]])
     Sh = np.array([[1.0, np.tan(comp["shear_x"])], [np.tan(comp["shear_y"]), 1.0]])

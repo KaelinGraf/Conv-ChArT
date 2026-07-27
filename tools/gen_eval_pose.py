@@ -40,11 +40,12 @@ def build_parser():
 
 
 def _accept_pose(rng, i, W, H, s_lo, s_hi, lattice, visible):
-    """Draw (K, R, t) up to 100x, rejection-sampling until >=8 of the 16
-    lattice corners project in-frame and all 16 are in front of the camera;
-    a config pathology raises loudly rather than silently degrading.
-    s_target is the nominal apparent square size at the board centre --
-    tilt makes the true local scale vary across the board."""
+    """Draw (K, R, t) up to 100x, rejection-sampling until >=8 of the
+    lattice's corners (board-size-dependent -- see dcc.board.n_corners)
+    project in-frame and all of them are in front of the camera; a config
+    pathology raises loudly rather than silently degrading. s_target is
+    the nominal apparent square size at the board centre -- tilt makes
+    the true local scale vary across the board."""
     import numpy as np
     import cv2
     cx, cy = (W - 1) / 2, (H - 1) / 2
@@ -108,13 +109,17 @@ def main():
     import cv2
     import skimage
     import yaml
-    from dcc.board import render_board
+    from dcc.board import get_board, n_corners, render_board
     from dcc.pipeline import canon_lattice
     from dcc.synth import list_backgrounds, _prep_background, _apply_occlusion, _apply_photometric, visible
     from dcc.viz import draw_overlay, tile
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
+    bcfg = cfg.get("board")
+    n_cls = n_corners(bcfg)
+    assert n_cls >= 8, (f"board has {n_cls} inner corners (cfg['board']['squares']); boards smaller than "
+                         "8 inner corners cannot satisfy the SD-10 >=8-visible acceptance rule in _accept_pose")
     bg_path = cfg["synth"]["backgrounds"]
     bg_files = list_backgrounds(bg_path)
     if not bg_files:
@@ -123,11 +128,11 @@ def main():
 
     W, H = cfg["input_size"]
     render_res = cfg["synth"]["render_res"]
-    SQ = render_res // 5
+    SQ = render_res // get_board(bcfg)[1]
     s_lo, s_hi = cfg["scale_range_px"]
     pose_seed = cfg["synth"]["pose_seed"]
 
-    board_img, render_corners = render_board(render_res)
+    board_img, render_corners = render_board(render_res, bcfg)
     board_3ch = cv2.cvtColor(board_img, cv2.COLOR_GRAY2BGR)
     mask_src = np.ones((render_res, render_res), dtype=np.float32)
     n = math.isqrt(len(render_corners))

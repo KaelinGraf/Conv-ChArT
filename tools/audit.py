@@ -16,11 +16,24 @@ _PROJ_DIR = str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, _PROJ_DIR)
 
 
+def _positive_int(value):
+    """--n-dist ends up as an unguarded divisor in _gate_distributions
+    (neg_frac = neg_count / n_dist); 0 crashes with ZeroDivisionError only
+    after wasting the overlay pass ahead of it, so reject it here instead.
+    --n-overlay and --n-roundtrip have no such divide-by-count and degrade
+    gracefully (an empty, vacuously-passing gate) at 0, so they keep plain
+    type=int."""
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {n}")
+    return n
+
+
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", default="configs/default.yaml")
     p.add_argument("--out", default="audit/")
-    p.add_argument("--n-dist", type=int, default=10000)
+    p.add_argument("--n-dist", type=_positive_int, default=10000)
     p.add_argument("--n-overlay", type=int, default=200)
     p.add_argument("--n-roundtrip", type=int, default=1000)
     p.add_argument("--save", action="store_true", help="also materialise the dist pass to val_set.npz")

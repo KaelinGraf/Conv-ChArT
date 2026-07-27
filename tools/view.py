@@ -101,10 +101,13 @@ def _save_sheet(rows, ncols, out_path):
 
 
 def _save_channel_grid(ct, out_path):
+    import math
     import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(4, 4, figsize=(8, 8), squeeze=False)
-    for k in range(16):
-        ax = axes[k // 4][k % 4]
+    n_cls = ct.shape[0]
+    side = math.ceil(math.sqrt(n_cls))
+    fig, axes = plt.subplots(side, side, figsize=(2 * side, 2 * side), squeeze=False)
+    for k in range(n_cls):
+        ax = axes[k // side][k % side]
         ax.imshow(ct[k], cmap="hot")
         ax.set_title(str(k), fontsize=8)
         ax.axis("off")
@@ -114,9 +117,12 @@ def _save_channel_grid(ct, out_path):
 
 
 def _interactive(rows, ncols, cts, show_channels):
+    import math
     import matplotlib.pyplot as plt
     fig, axes = plt.subplots(1, ncols, figsize=(4 * ncols, 3.2), squeeze=False)
-    fig_ch, axes_ch = plt.subplots(4, 4, figsize=(7, 7), squeeze=False) if show_channels else (None, None)
+    side = math.ceil(math.sqrt(cts[0].shape[0])) if show_channels else 0
+    fig_ch, axes_ch = (plt.subplots(side, side, figsize=(1.75 * side, 1.75 * side), squeeze=False)
+                        if show_channels else (None, None))
     pos = [0]
 
     def render():
@@ -126,8 +132,9 @@ def _interactive(rows, ncols, cts, show_channels):
         fig.suptitle(f"[{pos[0] + 1}/{len(rows)}]  n=next  p=prev  q=quit", fontsize=9)
         fig.canvas.draw_idle()
         if show_channels:
-            for k in range(16):
-                ax = axes_ch[k // 4][k % 4]
+            n_cls = cts[pos[0]].shape[0]
+            for k in range(n_cls):
+                ax = axes_ch[k // side][k % side]
                 ax.cla()
                 ax.imshow(cts[pos[0]][k], cmap="hot")
                 ax.set_title(str(k), fontsize=8)

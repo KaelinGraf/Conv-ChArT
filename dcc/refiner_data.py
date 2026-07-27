@@ -118,6 +118,9 @@ def fast_refiner_crops(cfg, rng, bg_files):
     W, H = cfg["input_size"]
     size_mult = syn["refiner_res_mult"]
     w2, h2 = W * size_mult, H * size_mult
+    assert w2 == int(w2) and h2 == int(h2), \
+        f"input_size {cfg['input_size']} x size_mult {size_mult} is not a whole-pixel canvas"
+    w2, h2 = int(w2), int(h2)
     render_res = syn["render_res"]
     bcfg = cfg.get("board")
     nx = get_board(bcfg)[1]

@@ -12,27 +12,9 @@ This repository is a from-scratch implementation: every architectural and numeri
 
 Three stages. Stage 1 detects corners and reads identities from a single network. Stage 2 refines each corner to sub-pixel on the native sensor crop. Stage 3 turns detections into a pose through a lattice-consistency gate and classical PnP.
 
+Stages 1 and 2 are the networks in the figure above; Stage 3 is the classical decode:
+
 ```
-STAGE 1 — DetectorNet (dcc/model.py) — input 1×H×W, native 1600×1200 (ρ = sensor/input = 1)
-──────────────────────────────────────────────────────────────────────────────────────────
-  e1 -> e2 -> e3 -> e4 -> e5        conv encoder, H -> H/16, widths 32-64-128-256-256
-  (H)   (H/2) (H/4) (H/8) (H/16, final stage adds dilated 3x3 convs, rates 2 & 4)
-                          |
-                       blocks        2x pre-norm MHSA+MLP, d=256, h=8, 2D axial RoPE on Q,K
-                          |          tokens = H/16 x W/16 = 75x100 = 7,500, row-major flatten
-                          |          final LayerNorm  — sole board-scale context mechanism
-                          |
-  d4 <- gate4(e4) <-------+         H/16 -> H/8   (gate4: gates the H/8 skip)
-  d3 <- gate3(e3) <- d4             H/8  -> H/4   (gate3: gates the H/4 skip) --tap--> cls head (H/4 x W/4 x 16, sigmoid)
-  d2 <-       e2  <- d3             H/4  -> H/2   (skip UNGATED)
-  d1 <-       e1  <- d2             H/2  -> H     (skip UNGATED)             --tap--> hm  head (H x W x 1,   sigmoid)
-
-STAGE 2 — Refiner (dcc/model.py) — per detected peak, board-agnostic, own checkpoint
-──────────────────────────────────────────────────────────────────────────────────────────
-  24x24 sensor-frame crop -> 3x conv (1->32->64->64) -> centre-crop to central 8x8
-    -> conv (64->64) -> 1x1 conv (64->64 = 8^2 channels) -> PixelShuffle(8)
-    -> sigmoid -> soft-argmax (5x5 window around the hard argmax) -> u* = 31.5 + 8d -> xy_refined
-
 STAGE 3 — Inference pipeline (dcc/pipeline.py:detect) — pure functions, no training deps
 ──────────────────────────────────────────────────────────────────────────────────────────
   peaks (3x3 max-pool equality, tau_hm) -> merge_close (NMS radius 2 px)

@@ -12,3 +12,5 @@ spec/
 memory.md
 ablations.md
 paper/
+audit640/
+eval_pose*/

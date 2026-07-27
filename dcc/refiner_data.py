@@ -17,7 +17,16 @@ tests/test_refiner_fast.py::test_window_equivalence). _MARGIN=8 gives
 blur/motion-blur/ghost their kernel/shift support (max combined extent
 ~2.8+1+4=7.8px, see dcc.synth._apply_photometric's pinned step order)
 without needing full-canvas evaluation; the central 24x24 is taken after
-photometrics.
+photometrics. The rev-2 aug pack's new position-dependent effects
+(specular, droplet bokeh, vignette, differencing's illumination lobe) need
+no _MARGIN change: like glare before them, they are pure FIELDS evaluated
+at absolute canvas coordinates via _apply_photometric's shared abs_grid, no
+neighbour-pixel data required. Droplet mode (b) and fixed-pattern noise
+DO need genuinely non-local pixel data (a resampled neighbourhood several
+times the disc's own size; a pattern fixed across the whole frame) that a
+40px window can't supply -- both are restricted to the full-canvas arm
+(window_origin is None) inside _apply_photometric itself, not by anything
+in this module.
 
 Corner choice + jitter mirror cut_refiner_crops' discipline exactly: pick
 up to refiner_max_corners corners (rng.permutation over the visible ones),
@@ -97,6 +106,19 @@ def _cached_bg_match(bg_path, board_3ch):
     return decoded, matched
 
 
+def _window_transform(Hmat, wx0, wy0):
+    """H conjugated to a (wx0, wy0)-origin window -- the T @ Hmat step
+    _render_fast_window needs internally and fast_refiner_crops needs again
+    (rev-2 aug pack, task #29) to re-derive the window's own board-mask
+    slice for _apply_photometric's board_mask arg, without
+    _render_fast_window's own 2-tuple return growing a 3rd element (which
+    would break tests/test_refiner_fast.py::test_window_equivalence's
+    positional unpack -- the same constraint dcc.synth._warp_mask works
+    around for _composite_board)."""
+    T = np.array([[1.0, 0.0, -wx0], [0.0, 1.0, -wy0], [0.0, 0.0, 1.0]])
+    return T @ Hmat
+
+
 def _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy):
     """Pure per-corner window compositor -- no rng, factored out so it can
     be unit tested directly against the corresponding window of a real
@@ -110,8 +132,7 @@ def _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy):
     photometrics) and its virtual-canvas top-left (wx0, wy0), for
     _apply_photometric's window_origin."""
     wx0, wy0 = cx - 12 - _MARGIN, cy - 12 - _MARGIN
-    T = np.array([[1.0, 0.0, -wx0], [0.0, 1.0, -wy0], [0.0, 0.0, 1.0]])
-    H_win = T @ Hmat
+    H_win = _window_transform(Hmat, wx0, wy0)
     warped_board = cv2.warpPerspective(matched, H_win, (_PATCH, _PATCH), flags=cv2.INTER_LINEAR,
                                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
     warped_mask = cv2.warpPerspective(mask_src, H_win, (_PATCH, _PATCH), flags=cv2.INTER_LINEAR,
@@ -187,7 +208,18 @@ def fast_refiner_crops(cfg, rng, bg_files):
                 x0 = int(rng.integers(0, dw - _PATCH + 1))
                 bg_tile = decoded[y0:y0 + _PATCH, x0:x0 + _PATCH]
                 work, origin = _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy)
-                work = _apply_photometric(work, rng, ph, w2, h2, window_origin=origin)
+                # rev-2 aug pack (task #29): the window's own board-mask slice,
+                # re-derived (not returned by _render_fast_window, see
+                # _window_transform) for _apply_photometric's board_mask arg;
+                # board_centroid approximates the true board centroid with the
+                # crop's own (un-jittered) corner position -- the window never
+                # sees the whole board, so its own anchor point is the best
+                # locally-available stand-in (see dcc/synth.py's module doc).
+                H_win = _window_transform(Hmat, *origin)
+                board_mask = cv2.warpPerspective(mask_src, H_win, (_PATCH, _PATCH), flags=cv2.INTER_LINEAR,
+                                                  borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+                work = _apply_photometric(work, rng, ph, w2, h2, window_origin=origin,
+                                           board_mask=board_mask, board_centroid=tuple(p))
                 gray = cv2.cvtColor(np.clip(work, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
                 out.append({"crop": gray[_MARGIN:_MARGIN + 24, _MARGIN:_MARGIN + 24].copy(), "d": d})
                 break

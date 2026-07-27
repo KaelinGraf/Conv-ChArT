@@ -75,6 +75,51 @@ sites (SynthStream and RefinerVal) and draws nothing extra when the frac is
 0 or absent. (a) adds mid-photometric rng draws, so every existing val/train
 stream realigns one final time from this slice on -- accepted, and the last
 such realignment before this file freezes for the training campaign.
+
+Rev-2 augmentation pack (task #29 -- sim-to-real, all config-gated,
+individually probability/enabled-gated, all photometric-only except
+adherent droplets, see below): _apply_photometric's pinned order is now
+composite -> (1) board specular -> (2) droplets -> (3) vignette -> (4) NIR
+ink-contrast jitter -> existing blur family -> (5) differencing pair (when
+drawn, SUBSUMES the brightness step for that sample -- brightness's own
+coin isn't even drawn) or legacy brightness -> dark-regime white grey-out
+(task #25, gated on that sample's own OUTPUT exposure landing deep, BEFORE
+sensor noise -- the differencing branch reads its own clipped result's 99th
+percentile rather than its ambient draw, since ambient alone doesn't
+determine output brightness; the brightness branch's own draw IS
+output-coupled, so it's used directly, see _apply_photometric) -> (6)
+Poissonian-Gaussian sensor noise (replaces the legacy
+additive-Gaussian draw when sensor_noise_enabled; gauss_noise_p still gates
+WHETHER noise fires either way) -> (7) fixed-pattern noise (full-canvas
+only, see _apply_photometric) -> existing speckle/mult/contrast/rgb-shift/
+glare/ghost, unchanged relative order (brightness excised from its old spot
+between mult and contrast) -> clip/uint8. (1) specular, (3) vignette, (4)
+ink-contrast and the differencing pair's illumination lobe are all
+board-anchored or canvas-centred FIELDS evaluated at absolute canvas
+coordinates -- window-evaluable exactly like the pre-existing glare
+implementation, sharing its lazy per-call coordinate grid (_apply_
+photometric's abs_grid closure). board_mask (the warped board alpha, `work`'s
+own local frame) and board_centroid ((x, y) in ABSOLUTE canvas coordinates)
+thread into _apply_photometric from generate_sample (via a new _warp_mask
+helper -- _composite_board's own 4-tuple return can't grow without breaking
+tests/test_refiner_fast.py's positional unpack, so the mask is re-derived
+from the returned H instead of also being returned) and from
+dcc.refiner_data.fast_refiner_crops (board_centroid approximated by the
+crop's own corner position there, per the module's own approximation
+style). Droplets' mode (b) (a refractive patch that resamples a
+several-times-larger neighbourhood than its own disc) and fixed-pattern
+noise (a fixed-per-frame pattern) are both restricted to window_origin is
+None (the full-canvas arm): mode (b) needs pixel data well outside the fast
+refiner arm's local-window budget, and FPN's "fixed per frame" contract
+would need a hash-reseeded-per-column RNG to stay window-consistent, which
+this pack does not attempt -- 24px refiner crops are near-DC for banding
+regardless. Droplet mode (b) is the ONLY label-touching new augmentation:
+an information-destroying disc (alpha/radius past a config threshold)
+registers a bounding-square hole through generate_sample's own `holes` list
+(the same rect-hole format/visible() test _apply_occlusion's holes already
+use), via an optional holes_out list _apply_photometric appends to in
+place -- not a return-value change, for the same tests/test_generator.py
+and tools/gen_eval_pose.py single-return-value-callers reason as above.
 """
 import json
 from pathlib import Path
@@ -250,6 +295,20 @@ def _perspective_factor(tau, psi, fov_scale, s, w2, render_res, nx=5):
     return Tcr @ Pg @ Tmcr
 
 
+def _warp_mask(H, render_res, w2, h2):
+    """The board alpha (render_res^2 all-ones, H-warped to the (w2, h2)
+    canvas) -- factored out of _composite_board so generate_sample can
+    obtain it a SECOND time (for _apply_photometric's board_mask arg)
+    without _composite_board's own 4-tuple return growing a 5th element,
+    which would break tests/test_refiner_fast.py::test_window_equivalence's
+    positional unpack. The extra warpPerspective this costs per positive
+    sample is cheap (single-channel) next to the 3-channel board/background
+    warps already paid for in _composite_board."""
+    mask_src = np.ones((render_res, render_res), dtype=np.float32)
+    return cv2.warpPerspective(mask_src, H, (w2, h2), flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
 def _composite_board(bg_crop, rng, cfg, w2, h2, s_arg, size_mult, components):
     """Render the board once, sample its affine + perspective factors,
     histogram-match it to the background crop, anti-alias prefilter it when
@@ -285,11 +344,9 @@ def _composite_board(bg_crop, rng, cfg, w2, h2, s_arg, size_mult, components):
         if sigma_r > 0.1:
             matched = cv2.GaussianBlur(matched, (0, 0), sigmaX=sigma_r)
 
-    mask_src = np.ones((render_res, render_res), dtype=np.float32)
     warped_board = cv2.warpPerspective(matched, H, (w2, h2), flags=cv2.INTER_LINEAR,
                                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    warped_mask = cv2.warpPerspective(mask_src, H, (w2, h2), flags=cv2.INTER_LINEAR,
-                                       borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    warped_mask = _warp_mask(H, render_res, w2, h2)
     m = warped_mask[..., None]
     work = bg_crop.astype(np.float32) * (1 - m) + warped_board * m
 
@@ -408,15 +465,77 @@ def _apply_occlusion(work, rng, occ, w2, h2):
     return holes
 
 
-def _apply_photometric(work, rng, ph, w2, h2, window_origin=None):
+def _sample_on_mask(rng, mask, thresh=0.5, tries=5):
+    """A point drawn (reject-sampled, `tries` attempts) uniformly over
+    `mask`'s own bounding box and accepted only where `mask > thresh` --
+    "uniform on the board" for _apply_photometric's specular lobe centre.
+    Falls back to the bbox centre after `tries` misses (a warped board mask
+    is a single compact convex-ish blob, so a miss run this long is rare)
+    or to the array's own centre if `mask` has no pixel above `thresh` at
+    all (e.g. an off-board refiner-crop window). Returns LOCAL (x, y) --
+    `mask`'s own coordinate frame, not necessarily the canvas's."""
+    ys, xs = np.where(mask > thresh)
+    h, w = mask.shape[:2]
+    if len(xs) == 0:
+        return w / 2.0, h / 2.0
+    x0, x1, y0, y1 = float(xs.min()), float(xs.max()), float(ys.min()), float(ys.max())
+    for _ in range(tries):
+        x, y = rng.uniform((x0, y0), (x1 + 1.0, y1 + 1.0))
+        iy, ix = min(int(y), h - 1), min(int(x), w - 1)
+        if mask[iy, ix] > thresh:
+            return float(x), float(y)
+    return (x0 + x1) / 2.0, (y0 + y1) / 2.0
+
+
+def _apply_refractive_droplet(work, cx, cy, radius, minify, alpha, blur_sigma):
+    """Mode-(b) adherent droplet (Roser & Geiger ICCV 2009; You et al. CVPR
+    2013): the disc of radius `radius` centred at (cx, cy) is replaced by a
+    minified, vertically-inverted, blurred crop of the scene around that
+    same point -- a cheap stand-in for a water droplet's own tiny lens.
+    Full-canvas only (see _apply_photometric's module-docstring note): the
+    source crop spans up to radius/minify in side length (~133px at the
+    loosest minify), well beyond the fast refiner arm's local-window
+    budget. Returns a NEW array (`work` is not mutated in place), matching
+    _apply_photometric's own convention -- even though the upstream
+    generate_sample steps _apply_cutouts/_apply_occlusion do mutate their
+    `work` argument in place."""
+    h, w = work.shape[:2]
+    diam = max(2, int(round(2 * radius)))
+    side = min(max(diam, int(round(diam / minify))), w, h)
+    x0 = int(np.clip(round(cx - side / 2), 0, max(0, w - side)))
+    y0 = int(np.clip(round(cy - side / 2), 0, max(0, h - side)))
+    patch = cv2.resize(work[y0:y0 + side, x0:x0 + side], (diam, diam), interpolation=cv2.INTER_AREA)
+    patch = cv2.flip(patch, 0)
+    patch = cv2.GaussianBlur(patch, (0, 0), sigmaX=blur_sigma)
+
+    yy, xx = np.mgrid[0:diam, 0:diam].astype(np.float32) - (diam - 1) / 2.0
+    disc = ((xx ** 2 + yy ** 2) <= (diam / 2.0) ** 2).astype(np.float32) * alpha
+
+    px0, py0 = int(round(cx - diam / 2.0)), int(round(cy - diam / 2.0))
+    tx0, ty0 = max(px0, 0), max(py0, 0)
+    tx1, ty1 = min(px0 + diam, w), min(py0 + diam, h)
+    if tx1 <= tx0 or ty1 <= ty0:
+        return work
+    lx0, ly0 = tx0 - px0, ty0 - py0
+    lx1, ly1 = lx0 + (tx1 - tx0), ly0 + (ty1 - ty0)
+    a = disc[ly0:ly1, lx0:lx1, None]
+    out = work.copy()
+    out[ty0:ty1, tx0:tx1] = work[ty0:ty1, tx0:tx1] * (1 - a) + patch[ly0:ly1, lx0:lx1] * a
+    return out
+
+
+def _apply_photometric(work, rng, ph, w2, h2, window_origin=None, board_mask=None,
+                        board_centroid=None, holes_out=None):
     """SD-03 photometric set, in the pinned order; each gated by its own
     probability. Returns the (possibly reassigned, cv2 ops are not in-place)
-    float32 array; caller clips/casts to uint8 afterwards. Slice B5 adds two
-    steps at the positions the grounding sweep found missing: speckle (the
-    Deep ChArUco paper's own Table 1 term) right after the gaussian blur, and
-    contrast (the reference pipeline's only contrast source, dropped when
-    this file replaced it) right after brightness -- both conditional draws,
-    so turning either on shifts every rng call downstream of it.
+    float32 array; caller clips/casts to uint8 afterwards. Slice B5 added
+    speckle (the Deep ChArUco paper's own Table 1 term) and contrast (the
+    reference pipeline's only contrast source, dropped when this file
+    replaced it) -- both, like every step here, conditional draws, so
+    turning any one on shifts every rng call downstream of it. See the
+    module docstring for the full pinned order (rev-2 pack, task #29,
+    reordered speckle/contrast to after the new sensor-noise/FPN steps and
+    moved brightness into the differencing/brightness branch below).
 
     window_origin (dcc.refiner_data's fast refiner-crop arm only; every
     other caller leaves it None) marks `work` as a (w2, h2)-canvas WINDOW
@@ -429,12 +548,120 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None):
     (wx0, wy0) offset. Local operations (blur, ghost's shift) need no such
     restriction: their kernel/shift extent is well within the fast arm's
     window margin, so evaluating them on the window alone already matches
-    full-canvas evaluation at those pixels."""
+    full-canvas evaluation at those pixels.
+
+    Rev-2 pack (task #29, see module docstring for the full pinned order and
+    the window/hole-registration design notes): board_mask (2D float32 in
+    [0, 1], `work`'s own local frame) and board_centroid ((x, y) in ABSOLUTE
+    canvas coordinates) gate/centre the board-anchored steps (specular,
+    ink-contrast, differencing's illumination lobe); both None for negatives
+    or callers with no board geometry to hand (e.g. tests/test_generator.py's
+    isolated-effect calls) -- the gating coin still always draws in that
+    case, only the effect's body is skipped, so rng consumption stays
+    self-consistent regardless of board presence. holes_out, if given a
+    list, gets mode-(b) droplet holes APPENDED to it in place (see
+    generate_sample); every other caller leaves it None."""
     ph_h, ph_w = work.shape[:2]
     wx0, wy0 = (0, 0) if window_origin is None else window_origin
-    if rng.random() < ph["gauss_noise_p"]:
-        std = rng.uniform(*ph["noise_std"])
-        work = work + rng.normal(0, std, work.shape).astype(np.float32)
+
+    _grid = [None]
+
+    def abs_grid():
+        # Lazy + shared across every position-dependent step below (specular,
+        # droplet bokeh, vignette, differencing, glare): computed at most
+        # once per call, by whichever fires first. Most samples fire none of
+        # them, so unconditionally allocating two (ph_h, ph_w) float32 grids
+        # on every call (glare's own previous inline cost, now shared) would
+        # be wasted work far more often than not.
+        if _grid[0] is None:
+            ys, xs = np.mgrid[wy0:wy0 + ph_h, wx0:wx0 + ph_w]
+            _grid[0] = (ys.astype(np.float32), xs.astype(np.float32))
+        return _grid[0]
+
+    have_board = board_mask is not None and np.any(board_mask > 0.5)
+    cxb, cyb = board_centroid if board_centroid is not None else ((w2 - 1) / 2.0, (h2 - 1) / 2.0)
+
+    # (1) board specular -- Blinn-Phong lobe (Blinn 1977): a 2D Gaussian
+    # raised to a power n as a proxy for (N.H)^n. No real 3D normal/half-
+    # vector is simulated -- there is no per-pixel surface geometry in this
+    # 2D pipeline -- the same simplification glare's own Gaussian "hot spot"
+    # already makes.
+    if rng.random() < ph["specular_p"]:
+        if have_board:
+            lx, ly = _sample_on_mask(rng, board_mask)
+            cx, cy = wx0 + lx, wy0 + ly
+            strength = rng.uniform(*ph["specular_strength"])
+            n = rng.uniform(*ph["specular_exponent"])
+            spread = rng.uniform(*ph["specular_spread_frac"]) * min(w2, h2)
+            ys, xs = abs_grid()
+            cos_nh = np.clip(np.exp(-0.5 * ((xs - cx) ** 2 + (ys - cy) ** 2) / spread ** 2), 0.0, 1.0)
+            work = work + (strength * cos_nh ** n)[..., None].astype(np.float32)
+
+    # (2) adherent droplets (Roser & Geiger ICCV 2009; You et al. CVPR
+    # 2013): position drawn canvas-uniform (like glare); mode (b) (the only
+    # label-touching new augmentation) is restricted to the full-canvas arm
+    # (window_origin is None), see module docstring -- the window arm still
+    # gets mode (a) bokeh blobs, just never mode (b).
+    if rng.random() < ph["droplet_p"]:
+        lo, hi = ph["droplet_n"]
+        for _ in range(int(rng.integers(lo, hi + 1))):
+            cx, cy = rng.uniform((0.0, 0.0), (float(w2), float(h2)))
+            mode_b = window_origin is None and rng.random() < ph["droplet_mode_b_p"]
+            if mode_b:
+                radius = float(rng.uniform(*ph["droplet_refractive_radius"]))
+                minify = rng.uniform(*ph["droplet_refractive_minify"])
+                alpha = rng.uniform(*ph["droplet_refractive_alpha"])
+                blur_sigma = rng.uniform(*ph["droplet_refractive_blur_sigma"])
+                work = _apply_refractive_droplet(work, cx, cy, radius, minify, alpha, blur_sigma)
+                if (holes_out is not None and alpha > ph["droplet_hole_alpha_thresh"]
+                        and radius > ph["droplet_hole_radius_thresh"]):
+                    # Information-destroying: register a bounding-SQUARE hole
+                    # (not the disc itself) through the existing rect-hole
+                    # machinery (_apply_occlusion's own format, visible()'s
+                    # own test) rather than teaching visible() a circular
+                    # test -- simpler, and only ever slightly OVER-occludes
+                    # (the disc's own four corners), never under-occludes.
+                    holes_out.append((cx - radius, cy - radius, 2 * radius, 2 * radius))
+            else:
+                radius = rng.uniform(*ph["droplet_bokeh_radius"])
+                brightness = rng.uniform(*ph["droplet_bokeh_brightness"])
+                ys, xs = abs_grid()
+                blob = brightness * np.exp(-0.5 * ((xs - cx) ** 2 + (ys - cy) ** 2) / radius ** 2)
+                work = work + blob[..., None].astype(np.float32)
+
+    # (3) vignetting (Goldman TPAMI 2010): I * (1 - v*(r/r_max)^2)^2, about
+    # the canvas centre.
+    if rng.random() < ph["vignette_p"]:
+        v = rng.uniform(*ph["vignette_strength"])
+        ys, xs = abs_grid()
+        ccx, ccy = (w2 - 1) / 2.0, (h2 - 1) / 2.0
+        r_max = 0.5 * np.sqrt(w2 ** 2 + h2 ** 2)
+        r2 = ((xs - ccx) ** 2 + (ys - ccy) ** 2) / r_max ** 2
+        work = work * ((1 - v * r2) ** 2)[..., None].astype(np.float32)
+
+    # (4) NIR ink-contrast jitter -- own placement choice (not pinned by the
+    # brief): grouped with the other scene-material effects above, before
+    # the camera/sensor-side effects below. Carbon-black toner/ink absorbs
+    # strongly across the NIR band even at low dot density, while many
+    # dye-based inks are comparatively NIR-transparent -- the basis of
+    # Vis-NIR ink discrimination in questioned-document/security-printing
+    # forensics (see e.g. "Principal component analysis for the forensic
+    # discrimination of black inkjet inks based on the Vis-NIR fibre optics
+    # reflection spectra", Forensic Science International 254 (2015)) -- so
+    # a printed board's dark ink is expected to read lighter/greyer under
+    # NIR illumination than it does under visible light.
+    if rng.random() < ph["ink_contrast_p"]:
+        if have_board:
+            mask_bool = board_mask > 0.5
+            # plain per-pixel channel mean, not a BGR2GRAY-weighted luma --
+            # mirrors contrast_p's own "plain scalar mean" precedent below.
+            luma = work.mean(axis=-1)
+            vals = luma[mask_bool]
+            median, white = np.median(vals), np.percentile(vals, 95)
+            scale = rng.uniform(*ph["ink_contrast_scale"])
+            dark = (mask_bool & (luma < median))[..., None]
+            work = np.where(dark, np.minimum(work * scale, white), work).astype(np.float32)
+
     if rng.random() < ph["motion_blur_p"]:
         ks = np.arange(3, ph["motion_blur_kmax"] + 1, 2)
         k = int(rng.choice(ks))
@@ -449,13 +676,46 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None):
     if rng.random() < ph["gauss_blur_p"]:
         k = int(rng.choice([3, 5, 7]))
         work = cv2.GaussianBlur(work, (k, k), 0)
-    if rng.random() < ph["speckle_p"]:
-        std = rng.uniform(*ph["speckle_std"])
-        work = work * (1 + rng.normal(0, std, (ph_h, ph_w, 1)).astype(np.float32))
-    if rng.random() < ph["mult_noise_p"]:
-        field = rng.uniform(*ph["mult_noise_range"], size=(ph_h, ph_w, 1)).astype(np.float32)
-        work = work * field
-    if rng.random() < ph["brightness_p"]:
+    # (5) differencing pair (Petschnigg et al., "Digital Photography with
+    # Flash and No-Flash Image Pairs," SIGGRAPH 2004; Eisemann & Durand,
+    # "Flash Photography Enhancement via Intrinsic Relighting," SIGGRAPH
+    # 2004 -- companion papers on the same flash/no-flash pair) or legacy
+    # brightness -- mutually exclusive: when differencing's coin
+    # fires, brightness's own coin is never even drawn ("subsumes" it
+    # exactly as the brief specifies; the ambient/illum draws own exposure
+    # for that sample). `dark` carries the exposure verdict into the
+    # grey-out step right below, whichever branch (or neither) set it.
+    dark = False
+    if rng.random() < ph["differencing_p"]:
+        ambient = rng.uniform(*ph["differencing_ambient"])
+        peak = rng.uniform(*ph["differencing_illum_peak"])
+        floor = rng.uniform(*ph["differencing_illum_floor"])
+        sigma = rng.uniform(*ph["differencing_illum_sigma_frac"]) * min(w2, h2)
+        mag = rng.uniform(*ph["differencing_shift_px"])
+        ang = rng.uniform(0, 2 * np.pi)
+        ys, xs = abs_grid()
+        illum = floor + (peak - floor) * np.exp(-0.5 * ((xs - cxb) ** 2 + (ys - cyb) ** 2) / sigma ** 2)
+        i_lit = work * illum[..., None].astype(np.float32)
+        i_unlit = work * ambient
+        dxs, dys = mag * np.cos(ang), mag * np.sin(ang)
+        Mshift = np.array([[1, 0, dxs], [0, 1, dys]], dtype=np.float64)
+        i_unlit_shifted = cv2.warpAffine(i_unlit, Mshift, (ph_w, ph_h), flags=cv2.INTER_LINEAR,
+                                          borderMode=cv2.BORDER_REFLECT)
+        # differencing clips here (not just at the very end): a negative
+        # lit-minus-unlit is a physically impossible "negative light"
+        # reading, not a workspace value the rest of the pipeline should see.
+        work = np.clip(i_lit - i_unlit_shifted, 0, 255)
+        # Output-coupled grey-out gate, computed on the CLIPPED result, not
+        # on ambient (gate defect found at review: ambient alone doesn't
+        # determine output brightness -- a low ambient paired with a high
+        # illum peak can still clip to a bright frame, so an ambient-only
+        # gate was crushing contrast on ~11% of all frames regardless of
+        # their actual exposure). 99th percentile over the flat array (every
+        # channel and pixel pooled together, no separate luma reduction --
+        # same "plain scalar" precedent as contrast_p's own mean below) reads
+        # as "the white point landed below dark_greyout_white_thresh."
+        dark = np.percentile(work, 99) < ph["dark_greyout_white_thresh"]
+    elif rng.random() < ph["brightness_p"]:
         b = rng.uniform(*ph["brightness_range"])
         if rng.random() < 0.5:
             work = work * (1 + b)
@@ -464,6 +724,64 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None):
             # included) into exact zeros -- information-free positives that
             # contradict the negative stream. See brightness_add_floor in config.
             work = work + max(b, ph["brightness_add_floor"]) * 255
+        # b IS output-coupled here (unlike differencing's ambient): it scales
+        # the whole frame directly, so the input draw is a valid proxy for
+        # the output's own exposure -- no percentile needed.
+        dark = b < ph["dark_greyout_brightness_thresh"]
+
+    # (task #25 remainder) dark-regime white grey-out, BEFORE sensor noise
+    # per the brief: residual-contrast collapse when this sample's exposure
+    # (whichever branch drew it, if either) landed deep. Own observation --
+    # see the frame-000051 finding in the report.
+    if dark:
+        blend = rng.uniform(*ph["dark_greyout_blend"])
+        m = work.mean()
+        work = (1 - blend) * work + blend * m
+
+    # (6) sensor noise: Poissonian-Gaussian (Foi et al. 2008 IEEE TIP; EMVA
+    # 1288) when sensor_noise_enabled, else the legacy additive-Gaussian
+    # draw kept functional for A/B -- gauss_noise_p still gates WHETHER
+    # noise fires either way; sensor_noise_enabled only picks the formula.
+    if rng.random() < ph["gauss_noise_p"]:
+        if ph["sensor_noise_enabled"]:
+            K = rng.uniform(*ph["sensor_noise_electrons_per_dn"])
+            sigma_read = rng.uniform(*ph["sensor_noise_read_std"])
+            rate = np.maximum(work, 0.0) * K  # guard: rng.poisson rejects lam<0; lam=0 is legal
+            shot = rng.poisson(rate).astype(np.float32) / K
+            read = rng.normal(0, sigma_read, work.shape).astype(np.float32)
+            work = shot + read
+        else:
+            std = rng.uniform(*ph["noise_std"])
+            work = work + rng.normal(0, std, work.shape).astype(np.float32)
+
+    # (7) fixed-pattern noise (EMVA 1288; El Gamal & Eltoukhy 2005) --
+    # full-canvas only (window_origin is None). A genuinely FIXED pattern
+    # needs column/row offsets identical whether evaluated over the full
+    # canvas or any sub-window of it; deriving that from ABSOLUTE column/row
+    # index would need a per-column deterministic hash-reseed (up to ~1600
+    # reseeds/frame, and untested here for statistical quality) rather than
+    # drawing a single positionally-indexed array -- restricted to the full
+    # arm instead and documented, per the brief's own escape hatch (refiner
+    # crops are 24px: banding is near-DC at that scale, so the gap costs
+    # little).
+    if window_origin is None and rng.random() < ph["fpn_p"]:
+        sigma_c = rng.uniform(*ph["fpn_col_std"])
+        col = rng.normal(0, sigma_c, size=(1, ph_w, 1)).astype(np.float32)
+        row = rng.normal(0, sigma_c * 0.5, size=(ph_h, 1, 1)).astype(np.float32)  # "row the same at halved sigma"
+        work = work + col + row
+        if rng.random() < ph["fpn_prnu_p"]:
+            prnu_std = rng.uniform(*ph["fpn_prnu_std"])
+            work = work * rng.normal(1.0, prnu_std, size=(ph_h, ph_w, 1)).astype(np.float32)
+
+    # -- existing speckle/mult/contrast/rgb-shift/glare/ghost, unchanged
+    # relative order (brightness excised from its old spot between mult and
+    # contrast -- it now lives in the differencing/brightness branch above).
+    if rng.random() < ph["speckle_p"]:
+        std = rng.uniform(*ph["speckle_std"])
+        work = work * (1 + rng.normal(0, std, (ph_h, ph_w, 1)).astype(np.float32))
+    if rng.random() < ph["mult_noise_p"]:
+        field = rng.uniform(*ph["mult_noise_range"], size=(ph_h, ph_w, 1)).astype(np.float32)
+        work = work * field
     if rng.random() < ph["contrast_p"]:
         c = rng.uniform(*ph["contrast_range"])
         m = work.mean()  # plain scalar mean, not a BGR2GRAY-weighted luma
@@ -478,7 +796,7 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None):
         ax, ay = rng.uniform(20, 120), rng.uniform(20, 120)
         ang = rng.uniform(0, np.pi)
         peak = rng.uniform(40, 200)
-        ys, xs = np.mgrid[wy0:wy0 + ph_h, wx0:wx0 + ph_w].astype(np.float32)
+        ys, xs = abs_grid()
         xr = (xs - cx) * np.cos(ang) + (ys - cy) * np.sin(ang)
         yr = -(xs - cx) * np.sin(ang) + (ys - cy) * np.cos(ang)
         glare = peak * np.exp(-0.5 * ((xr / ax) ** 2 + (yr / ay) ** 2))
@@ -529,15 +847,29 @@ def generate_sample(cfg, rng, bg_files, s=None, size_mult=1, force_negative=None
 
     if negative:
         work = bg_crop.astype(np.float32)
-        p_img, M, comps, s_px = None, None, None, 0.0
+        p_img, M, comps, s_px, board_mask = None, None, None, 0.0, None
     else:
         work, p_img, M, comps = _composite_board(bg_crop, rng, cfg, w2, h2, s, size_mult, components)
         s_px = comps["s"]
+        # re-derived from H rather than a 5th _composite_board return value --
+        # see _warp_mask's own docstring for why.
+        board_mask = _warp_mask(M, cfg["synth"]["render_res"], w2, h2)
+    board_centroid = tuple(p_img.mean(axis=0)) if p_img is not None else None
 
     holes, cutouts_meta, occ_alpha = [], [], np.zeros((h2, w2), dtype=np.float32)
     if occlude:
         work, occ_alpha, cutouts_meta = _apply_cutouts(work, rng, cfg, cutout_files, w2, h2)
         holes = _apply_occlusion(work, rng, cfg["synth"]["occlusion"], w2, h2)
+
+    # Photometrics run BEFORE the visibility loop below (moved up from its
+    # old post-visibility spot; corners_out's own loop draws no rng at all,
+    # so this reorder changes nothing about the existing rng stream) so that
+    # holes_out=holes lets a strong mode-(b) droplet register a hole in time
+    # for THIS sample's own corners to see it -- see _apply_photometric's
+    # module-docstring note.
+    if photometric:
+        work = _apply_photometric(work, rng, cfg["synth"]["photometric"], w2, h2,
+                                   board_mask=board_mask, board_centroid=board_centroid, holes_out=holes)
 
     corners_out = []
     if not negative:
@@ -553,8 +885,6 @@ def generate_sample(cfg, rng, bg_files, s=None, size_mult=1, force_negative=None
                     vis = bool(occ_alpha[iy, ix] < 0.5)
             corners_out.append({"x": float(x), "y": float(y), "index": k, "visible": vis})
 
-    if photometric:
-        work = _apply_photometric(work, rng, cfg["synth"]["photometric"], w2, h2)
     image = cv2.cvtColor(np.clip(work, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
 
     record = {"image": image, "board_present": not negative, "s_px": float(s_px), "corners": corners_out}

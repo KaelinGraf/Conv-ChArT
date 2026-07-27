@@ -54,6 +54,9 @@ synth:
   photometric:
     gauss_noise_p: 0.5
     noise_std: [3.2, 7.1]
+    sensor_noise_enabled: true   # rev-2 aug pack (task #29, Kaelin 2026-07-27): Poissonian-Gaussian (Foi et al. 2008 IEEE TIP; EMVA 1288) replaces the legacy additive draw above when true; gauss_noise_p still gates WHETHER noise fires, this only picks the formula (kept false-able for A/B)
+    sensor_noise_electrons_per_dn: [1.5, 30.0]   # seeded from the OV2311 datasheet (OVT product brief v1.9 2023: 3um x 3um OmniPixel3-GS global-shutter pixel, 10-bit ADC -- confirmed) -- OmniVision does NOT publish full-well/conversion-gain/SNR for this part (even their own preliminary datasheet for the sibling OV9281, same OmniPixel3-GS 3um pixel family, marks those fields "TBD"). Range derived, not measured: ~30 e-/DN at the 8-bit workspace's low-gain/bright end (assuming an ~8000e- full well at base gain maps to the 255 white point, consistent with a ~4x 10-bit-to-8-bit reduction), down to ~1.5-4 e-/DN at the high-gain/dark end (matches this key's original placeholder range) -- PROVISIONAL, to be recalibrated from real dark/flat frames captured during task #26
+    sensor_noise_read_std: [1.0, 3.0]   # same provisional-pending-#26 status as electrons_per_dn above; not independently re-derived from the datasheet (OV2311 doesn't publish read noise either, and DN-scale read noise properly co-varies with gain/K, which this pack does not model as coupled draws)
     motion_blur_p: 0.5
     motion_blur_kmax: 5
     gauss_blur_p: 0.25
@@ -72,6 +75,38 @@ synth:
     ghost_p: 0.25
     ghost_alpha: [0.1, 0.5]
     ghost_shift_px: [1, 4]
+    specular_p: 0.15   # rev-2 aug pack (task #29): board-anchored Blinn-Phong lobe (Blinn 1977)
+    specular_strength: [30, 220]
+    specular_exponent: [20, 200]
+    specular_spread_frac: [0.08, 0.2]   # lobe spread, as a fraction of min(w2, h2) -- not pinned by the brief, chosen for a plausibly board-scaled hot spot
+    droplet_p: 0.1   # rev-2 aug pack (task #29): adherent droplets (Roser & Geiger ICCV 2009; You et al. CVPR 2013)
+    droplet_n: [1, 4]
+    droplet_mode_b_p: 0.5   # coin between mode (a) bokeh blob and mode (b) refractive patch; mode (b) is full-canvas-arm only regardless (see dcc/synth.py)
+    droplet_bokeh_radius: [4, 18]
+    droplet_bokeh_brightness: [40, 220]
+    droplet_refractive_radius: [6, 20]
+    droplet_refractive_minify: [0.15, 0.4]
+    droplet_refractive_alpha: [0.6, 0.9]
+    droplet_refractive_blur_sigma: [2, 4]
+    droplet_hole_alpha_thresh: 0.7   # mode-(b) droplets past this alpha AND radius register an occlusion hole (information-destroying, task #29's only label-touching effect)
+    droplet_hole_radius_thresh: 8
+    vignette_p: 0.5   # rev-2 aug pack (task #29): radial falloff about canvas centre (Goldman TPAMI 2010)
+    vignette_strength: [0.05, 0.25]
+    ink_contrast_p: 0.3   # rev-2 aug pack (task #29): NIR ink-contrast jitter -- carbon-black ink/toner absorbs NIR strongly, many dye inks are comparatively NIR-transparent (Vis-NIR ink discrimination forensics, e.g. Forensic Science International 254 (2015))
+    ink_contrast_scale: [1.0, 1.6]
+    differencing_p: 0.5   # rev-2 aug pack (task #29, Kaelin's design): flash/no-flash differencing pair (Petschnigg et al. SIGGRAPH 2004; Eisemann & Durand SIGGRAPH 2004); mutually exclusive with brightness_p above (see dcc/synth.py)
+    differencing_ambient: [0.02, 0.15]
+    differencing_illum_peak: [0.7, 1.3]
+    differencing_illum_floor: [0.05, 0.3]
+    differencing_illum_sigma_frac: [0.25, 0.45]   # illumination-lobe spread, as a fraction of min(w2, h2) -- not pinned by the brief
+    differencing_shift_px: [0.2, 3.0]
+    dark_greyout_white_thresh: 25   # task #25 remainder: deep-exposure grey-out gate for the differencing branch -- OUTPUT-coupled (99th percentile of the clipped differenced frame below this, ~10% of full scale), not ambient (gate defect found at review: ambient alone doesn't determine output brightness, see dcc/synth.py)
+    dark_greyout_brightness_thresh: -0.9   # ... and for the legacy brightness branch (b below this)
+    dark_greyout_blend: [0.3, 0.7]
+    fpn_p: 0.3   # rev-2 aug pack (task #29): fixed-pattern noise (EMVA 1288; El Gamal & Eltoukhy 2005) -- full-canvas arm only, see dcc/synth.py
+    fpn_col_std: [0.3, 1.2]   # row banding reuses this same per-sample draw at half sigma, not a separate range
+    fpn_prnu_p: 0.5
+    fpn_prnu_std: [0.005, 0.015]
 train:
   batch: 4
   accum: 8

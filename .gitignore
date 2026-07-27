@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+runs/
+sheets/
+audit/
+introspect_out/
+*.pt
+*.onnx
+spec/
+memory.md
+ablations.md

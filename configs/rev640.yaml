@@ -123,7 +123,7 @@ train:
   wd: 1.0e-4
   clip_norm: 5.0
   ema_decay: 0.999
-  workers: 16
+  workers: 12
   prefetch_factor: 4
   val_every: 2500
   full_val_every: 25000

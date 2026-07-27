@@ -1,4 +1,4 @@
-"""ConChArT board geometry convention: cv2 CharucoBoard(5x5, 1.0, 0.7, DICT_5X5_50).
+"""Conv-ChArT board geometry convention: cv2 CharucoBoard(5x5, 1.0, 0.7, DICT_5X5_50).
 
 Pixel-centre convention: an integer pixel coordinate is that pixel's centre
 (OpenCV convention); keypoints are (x, y) float64. Inner corner i (row = i//4,

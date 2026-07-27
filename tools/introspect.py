@@ -1,4 +1,4 @@
-"""Introspection & visualisation CLI for the ConChArT detector (conference
+"""Introspection & visualisation CLI for the Conv-ChArT detector (conference
 demo). Six presentation-grade panels rendered from a single forward pass over
 one SynthVal sample or a raw image: pipeline end-to-end, 3D heatmap
 landscape, bottleneck-attention maps, decoder skip gates, an

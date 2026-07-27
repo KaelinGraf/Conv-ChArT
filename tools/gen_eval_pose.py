@@ -1,6 +1,6 @@
 """tools/gen_eval_pose.py -- pose-consistent evaluation set generator.
 
-The only place in ConChArT with camera pose (K, R, t) bookkeeping. Per
+The only place in Conv-ChArT with camera pose (K, R, t) bookkeeping. Per
 image i, rng = np.random.default_rng([pose_seed, i]) draws a pinhole K and
 a board pose (R, t) with X_cam = R @ X_board + t, then projects the board's
 metric lattice (corner i at ((i%4)+1, (i//4)+1, 0) m; square_length_m fixed

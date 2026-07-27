@@ -1,4 +1,4 @@
-"""ConChArT training-target renderers — pure numpy, pure functions of the
+"""Conv-ChArT training-target renderers — pure numpy, pure functions of the
 label record, never persisted to disk (sigma stays tunable without regen).
 
 Shared convention: continuous positions are (x, y) float64; targets combine

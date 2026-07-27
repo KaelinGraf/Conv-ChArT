@@ -274,6 +274,7 @@ def main():
     matplotlib.use("Agg")
     from dcc.dataset import load_config, SynthVal, RefinerVal
     from dcc.synth import generate_sample, list_backgrounds, cut_refiner_crops
+    from dcc.trainutil import generator_fingerprint
     from dcc import board, viz
 
     cfg = load_config(args.config)
@@ -307,6 +308,7 @@ def main():
     for name, ok in gates:
         print(f"{'PASS' if ok else 'FAIL'}: {name}")
 
+    all_gates_passed = all(ok for _, ok in gates)
     report = {
         "config": cfg,
         "distributions": dist_report,
@@ -316,11 +318,13 @@ def main():
         "versions": {"numpy": np.__version__, "cv2": cv2.__version__, "skimage": skimage.__version__},
         "backgrounds_sha1": hashlib.sha1("\n".join(bg_files).encode()).hexdigest(),
         "gates": {name: ok for name, ok in gates},
+        "generator_fingerprint": generator_fingerprint(cfg, Path(_PROJ_DIR)),
+        "all_gates_passed": all_gates_passed,
     }
     with open(out / "report.json", "w") as f:
         json.dump(report, f, indent=2, cls=_NpEnc)
 
-    sys.exit(0 if all(ok for _, ok in gates) else 1)
+    sys.exit(0 if all_gates_passed else 1)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,11 @@ optimizer step, bf16 autocast + channels_last, grad-clip by global norm
 after accumulation (before the optimizer step), cosine LR + EMA update per
 optimizer step. Validation runs forward passes on a second `eval_model`
 instance loaded from EMA weights (ema.copy_to), so the live training model's
-mode/grads are never disturbed by validation.
+mode/grads are never disturbed by validation. Every validation pass also
+dumps the first 3 images' draw_overlay/heatmap_overlay panels to
+runs/<name>/preview/ -- a numeric gate alone missed a visually-obvious
+generator defect once (see tools/preflight.py's generator_lock), so a human
+glance at real predictions rides alongside the M-01/M-02/M-04 numbers below.
 
 Metrics per MT-05: M-01 (coarse localisation error vs visible GT, matched by
 greedy NN within cfg.train.match_px; TAIL_PX=4 is MT-03's refiner capture
@@ -49,6 +53,9 @@ def build_parser():
     p.add_argument("--resume", default=None, help="checkpoint .pt to resume from")
     p.add_argument("--steps", type=int, default=None, help="override cfg train.steps")
     p.add_argument("--freeze-trunk", action="store_true")
+    p.add_argument("--retarget-from", default=None,
+                    help="base checkpoint .pt to retarget onto this config's board (loads every "
+                         "non-cls.* tensor; requires --freeze-trunk)")
     return p
 
 
@@ -77,6 +84,7 @@ def _val_targets(cfg, record):
     SynthStream's dict-yield contract."""
     import numpy as np
     import torch
+    from dcc.board import n_corners
     from dcc.targets import render_class_targets, render_heatmap
 
     corners = record["corners"]
@@ -85,7 +93,7 @@ def _val_targets(cfg, record):
     vis = np.array([c["visible"] for c in corners], dtype=bool)
     idx = np.array([c["index"] for c in corners], dtype=int)
     hm = render_heatmap(pts, vis, (w, h), sigma=cfg["sigma_hm"])
-    ct = render_class_targets(pts, vis, idx, (w, h), sigma=cfg["sigma_cls"])
+    ct = render_class_targets(pts, vis, idx, (w, h), sigma=cfg["sigma_cls"], n_cls=n_corners(cfg.get("board")))
     image = torch.from_numpy(record["image"]).float().unsqueeze(0) / 255.0
     return image, torch.from_numpy(hm), torch.from_numpy(ct), int(vis.sum())
 
@@ -186,11 +194,16 @@ def _diag_log_fields(captured):
     return fields
 
 
-def run_validation(model, loader, cfg, device, tau_hm, match_px):
+def run_validation(model, loader, cfg, device, tau_hm, match_px, preview_dir=None, step=None):
     """Returns {val_loss, m01, m02, m04, diag}; m04 is None if dcc.pipeline
-    isn't importable yet."""
+    isn't importable yet. preview_dir/step (pass both together) additionally
+    dump the first 3 images' draw_overlay/heatmap_overlay side-by-side panels
+    to preview_dir/step_{step:07d}_val{i}.png -- pure visualisation, excluded
+    from every metric above."""
+    import cv2
     import numpy as np
     import torch
+    from dcc import viz
     from dcc.losses import detector_loss
     from dcc.pipeline import merge_close, peaks
 
@@ -205,7 +218,7 @@ def run_validation(model, loader, cfg, device, tau_hm, match_px):
     errs, tail_hits = [], 0
     octaves = {k: [0, 0] for k, _, _ in OCTAVE_BINS}     # name -> [matched, visible]
     id_octaves = {k: [0, 0] for k, _, _ in OCTAVE_BINS}  # name -> [correct, total]
-    loss_sum, loss_n, first_image = 0.0, 0, None
+    loss_sum, loss_n, first_image, n_preview = 0.0, 0, None, 0
 
     with torch.no_grad():
         for images, hms, cts, nvis, records in loader:
@@ -235,6 +248,13 @@ def run_validation(model, loader, cfg, device, tau_hm, match_px):
             cls_prob = torch.sigmoid(cls_logits.float())
             for b in range(images.shape[0]):
                 record = records[b]
+
+                if preview_dir is not None and n_preview < 3:
+                    panel = cv2.hconcat([viz.draw_overlay(record["image"], record),
+                                          viz.heatmap_overlay(record["image"], hm_prob[b, 0].cpu().numpy())])
+                    cv2.imwrite(str(preview_dir / f"step_{step:07d}_val{n_preview}.png"), panel)
+                    n_preview += 1
+
                 gt = [(c["x"], c["y"], c["index"]) for c in record["corners"] if c["visible"]]
                 gt_xy = np.array([(x, y) for x, y, _ in gt], dtype=np.float64).reshape(-1, 2)
                 det_xy, _p_hm = merge_close(*peaks(hm_prob[b, 0], tau_hm))
@@ -294,7 +314,10 @@ def run_validation(model, loader, cfg, device, tau_hm, match_px):
 
 
 def main():
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.retarget_from and not args.freeze_trunk:
+        parser.error("--retarget-from requires --freeze-trunk")
 
     import time
     from functools import partial
@@ -303,10 +326,11 @@ def main():
     import torch.nn as nn
     from torch.utils.data import DataLoader
 
+    from dcc.board import n_corners
     from dcc.dataset import SynthStream, SynthVal, load_config
     from dcc.losses import detector_loss  # noqa: F401 -- imported here so a missing dcc.losses fails fast
     from dcc.model import DetectorNet
-    from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, save_ckpt
+    from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, load_retarget_ckpt, param_groups, save_ckpt
 
     assert torch.cuda.is_available(), "CUDA required"
     assert torch.backends.cuda.flash_sdp_enabled(), "flash SDPA backend is disabled"
@@ -319,8 +343,9 @@ def main():
     tcfg = cfg["train"]
 
     W, H = cfg["input_size"]
-    model = DetectorNet(H, W).to(device, memory_format=torch.channels_last)
-    eval_model = DetectorNet(H, W).to(device, memory_format=torch.channels_last)
+    n_cls = n_corners(cfg.get("board"))
+    model = DetectorNet(H, W, n_cls=n_cls).to(device, memory_format=torch.channels_last)
+    eval_model = DetectorNet(H, W, n_cls=n_cls).to(device, memory_format=torch.channels_last)
 
     freeze = args.freeze_trunk or cfg.get("freeze_trunk", False)
     model.train()
@@ -336,11 +361,22 @@ def main():
             if not name.startswith("cls") and isinstance(m, bn_types):
                 m.eval()
 
+    retargeted_from = None
+    if args.retarget_from:
+        # New-board retarget: the base checkpoint's own n_cls (hence cls.*
+        # shape) may differ from this run's -- load_retarget_ckpt excludes
+        # cls.* from the load entirely, so model's freshly-initialised class
+        # head (built at THIS run's n_cls, above) is what actually trains.
+        base_ckpt = load_retarget_ckpt(args.retarget_from, model, map_location=device)
+        retargeted_from = {"path": str(args.retarget_from), "board": (base_ckpt.get("cfg") or {}).get("board")}
+
     ema = EMA(model, decay=tcfg["ema_decay"])
     optim = torch.optim.AdamW(param_groups(model, tcfg["wd"]), lr=tcfg["lr"], betas=(0.9, 0.999))
 
     run_dir = Path("runs") / args.name
     logger = JsonlLogger(run_dir / "metrics.jsonl")
+    preview_dir = run_dir / "preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
 
     step, resume_count, last_val = 0, 0, None
     if args.resume:
@@ -424,7 +460,8 @@ def main():
         if step % tcfg["val_every"] == 0 or step == total_steps:
             v0 = time.time()
             ema.copy_to(eval_model)
-            result = run_validation(eval_model, val_loader, cfg, device, tcfg["tau_hm"], tcfg["match_px"])
+            result = run_validation(eval_model, val_loader, cfg, device, tcfg["tau_hm"], tcfg["match_px"],
+                                     preview_dir, step)
             print(f"[val step {step}] loss={result['val_loss']} m01={result['m01']} m02={result['m02']} "
                   f"m04={result['m04']} diag={result['diag']}")
             logger.log(step=step, val=result)
@@ -435,13 +472,14 @@ def main():
             v0 = time.time()
             ema.copy_to(eval_model)
             full_result = run_validation(eval_model, full_val_loader, cfg, device, tcfg["tau_hm"],
-                                          tcfg["match_px"])
+                                          tcfg["match_px"], preview_dir, step)
             print(f"[FULL val step {step}] loss={full_result['val_loss']} m01={full_result['m01']} "
                   f"m02={full_result['m02']} m04={full_result['m04']}")
             logger.log(step=step, full_val=full_result)
             last_val = full_result
             ckpt_path = run_dir / f"ckpt_{step:07d}.pt"
-            save_ckpt(ckpt_path, step, resume_count, model, ema, optim, cfg, last_val)
+            save_ckpt(ckpt_path, step, resume_count, model, ema, optim, cfg, last_val,
+                      retargeted_from=retargeted_from)
             print(f"[train_detector] wrote checkpoint {ckpt_path}")
             val_time += time.time() - v0
 

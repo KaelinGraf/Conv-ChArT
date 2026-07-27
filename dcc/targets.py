@@ -38,14 +38,16 @@ def render_heatmap(pts: np.ndarray, vis: np.ndarray, size_wh: tuple[int, int],
 
 
 def render_class_targets(pts: np.ndarray, vis: np.ndarray, idx: np.ndarray,
-                          size_wh: tuple[int, int], sigma: float = 1.0) -> np.ndarray:
-    """Per-corner-index class target, shape (16, H//4, W//4). Cell j aggregates input
+                          size_wh: tuple[int, int], sigma: float = 1.0, n_cls: int = 16) -> np.ndarray:
+    """Per-corner-index class target, shape (n_cls, H//4, W//4). Cell j aggregates input
     pixels 4j..4j+3; cell-space position xc = (x+0.5)/4 - 0.5 keeps the
-    pixel-centre convention (pixel x=1.5, the centre of cell 0, maps to 0.0)."""
+    pixel-centre convention (pixel x=1.5, the centre of cell 0, maps to 0.0).
+    n_cls is the board's inner-corner count (dcc.board.n_corners); default 16
+    matches the project's 5x5 board."""
     w, h = size_wh
     if w % 4 or h % 4:
         raise ValueError(f"size_wh must be divisible by 4, got {size_wh}")
-    ct = np.zeros((16, h // 4, w // 4), dtype=np.float32)
+    ct = np.zeros((n_cls, h // 4, w // 4), dtype=np.float32)
     for (px, py), v, k in zip(pts, vis, idx):
         if v:
             _splat_max(ct[k], (px + 0.5) / 4 - 0.5, (py + 0.5) / 4 - 0.5, sigma)

@@ -23,6 +23,7 @@ Only the pinhole sampling and the perspective warp are new here.
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -77,7 +78,7 @@ def _homography_and_assert(K, R, t, SQ, render_corners, img_pts):
     Rt = np.column_stack([R[:, 0], R[:, 1], t])
     S = np.array([[1 / SQ, 0.0, 0.5 / SQ], [0.0, 1 / SQ, 0.5 / SQ], [0.0, 0.0, 1.0]])
     Hmat = K @ Rt @ S
-    proj = np.hstack([render_corners, np.ones((16, 1))]) @ Hmat.T
+    proj = np.hstack([render_corners, np.ones((len(render_corners), 1))]) @ Hmat.T
     proj = proj[:, :2] / proj[:, 2:3]
     err = float(np.linalg.norm(proj - img_pts, axis=1).max())
     assert err < 1e-6, f"S-matrix identity violated: max err {err:.3e} px"
@@ -108,6 +109,7 @@ def main():
     import skimage
     import yaml
     from dcc.board import render_board
+    from dcc.pipeline import canon_lattice
     from dcc.synth import list_backgrounds, _prep_background, _apply_occlusion, _apply_photometric, visible
     from dcc.viz import draw_overlay, tile
 
@@ -128,7 +130,8 @@ def main():
     board_img, render_corners = render_board(render_res)
     board_3ch = cv2.cvtColor(board_img, cv2.COLOR_GRAY2BGR)
     mask_src = np.ones((render_res, render_res), dtype=np.float32)
-    lattice = np.array([[(i % 4) + 1.0, (i // 4) + 1.0, 0.0] for i in range(16)])
+    n = math.isqrt(len(render_corners))
+    lattice = np.hstack([canon_lattice(n), np.zeros((n * n, 1))])
 
     out = Path(args.out)
     (out / "images").mkdir(parents=True, exist_ok=True)

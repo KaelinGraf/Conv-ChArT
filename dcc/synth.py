@@ -83,7 +83,7 @@ import cv2
 import numpy as np
 from skimage.exposure import match_histograms
 
-from dcc.board import render_board
+from dcc.board import get_board, render_board
 
 
 def list_backgrounds(path):
@@ -177,13 +177,14 @@ def _prep_background(bg, rng, syn, w2, h2):
     return bg[y0:y0 + h2, x0:x0 + w2]
 
 
-def _sample_affine(cfg, rng, w2, h2, s_arg, size_mult, components):
+def _sample_affine(cfg, rng, w2, h2, s_arg, size_mult, components, nx=5):
     """Draw (or take from `components`, the test/audit override surface) the
     six DoF of the board placement: A = (s/SQ) * R(theta) @ Shear(shear_x,
     shear_y); M = [A | c_in + t - A @ c_r] maps render-space -> composite-
     space about the render's own centre, then to c_in + t. The caller lifts
     M to 3x3 and right-multiplies it by a sampled perspective factor (see
-    module docstring)."""
+    module docstring). nx is the board's per-side square count (SQ =
+    render_res // nx); default 5 matches the project board."""
     comp = components or {}
     if "s" in comp:
         s = float(comp["s"])
@@ -201,7 +202,7 @@ def _sample_affine(cfg, rng, w2, h2, s_arg, size_mult, components):
     ty = float(comp["ty"]) if "ty" in comp else float(rng.uniform(-tf, tf) * h2)
 
     render_res = cfg["synth"]["render_res"]
-    SQ = render_res // 5
+    SQ = render_res // nx
     R = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
     Sh = np.array([[1.0, np.tan(shear_x)], [np.tan(shear_y), 1.0]])
     A = (s / SQ) * (R @ Sh)
@@ -232,12 +233,14 @@ def _sample_perspective(cfg, rng, components):
     return tau, psi, fov_scale
 
 
-def _perspective_factor(tau, psi, fov_scale, s, w2, render_res):
+def _perspective_factor(tau, psi, fov_scale, s, w2, render_res, nx=5):
     """3x3 P conjugated to fix the render centre c_r (see module docstring):
     calibrated so a tilt tau about axis angle psi matches, to first order,
     the induced homography of a tilted fronto-parallel board at apparent
-    scale s in front of a virtual pinhole of focal fov_scale * w2."""
-    SQ = render_res // 5
+    scale s in front of a virtual pinhole of focal fov_scale * w2. nx is the
+    board's per-side square count (SQ = render_res // nx); default 5
+    matches the project board."""
+    SQ = render_res // nx
     g = np.sin(tau) * s / (fov_scale * w2 * SQ)
     gx, gy = g * np.cos(psi), g * np.sin(psi)
     cr = (render_res - 1) / 2
@@ -252,23 +255,25 @@ def _composite_board(bg_crop, rng, cfg, w2, h2, s_arg, size_mult, components):
     histogram-match it to the background crop, anti-alias prefilter it when
     minifying (synth.prefilter -- pixel-only, no rng, runs after H/p_img's
     inputs are already fixed so geometry can't be touched), warp board+mask,
-    and alpha-composite. Returns the float32 BGR composite, the 16 warped
-    analytic corners, the 3x3 homography H, and the component dict actually
-    used (post override)."""
+    and alpha-composite. Returns the float32 BGR composite, the board's
+    (nx-1)^2 warped analytic corners, the 3x3 homography H, and the
+    component dict actually used (post override)."""
     render_res = cfg["synth"]["render_res"]
-    board_img, p_render = render_board(render_res)
-    M, comps = _sample_affine(cfg, rng, w2, h2, s_arg, size_mult, components)
+    bcfg = cfg.get("board")
+    board_img, p_render = render_board(render_res, bcfg)
+    nx = get_board(bcfg)[1]
+    M, comps = _sample_affine(cfg, rng, w2, h2, s_arg, size_mult, components, nx)
     tau, psi, fov_scale = _sample_perspective(cfg, rng, components)
     comps.update(tilt=tau, psi=psi, fov_scale=fov_scale)
     M3 = np.eye(3)
     M3[:2, :] = M
-    H = M3 @ _perspective_factor(tau, psi, fov_scale, comps["s"], w2, render_res)
+    H = M3 @ _perspective_factor(tau, psi, fov_scale, comps["s"], w2, render_res, nx)
 
     board_3ch = cv2.cvtColor(board_img, cv2.COLOR_GRAY2BGR)
     matched = match_histograms(board_3ch, bg_crop, channel_axis=-1).astype(np.float32)
 
     pf = cfg["synth"]["prefilter"]
-    s, SQ = comps["s"], render_res // 5
+    s, SQ = comps["s"], render_res // nx
     if pf["enabled"] and s < SQ:
         # Band-limit the render before warpPerspective minifies it (up to
         # 6x at s=16) -- INTER_LINEAR point-samples on the way down, which

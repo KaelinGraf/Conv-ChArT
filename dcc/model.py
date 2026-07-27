@@ -7,7 +7,7 @@ RoPE -> gated staggered-tap decoder, two factorised heads) and Refiner
                        blocks        MHSA+MLP x n_blocks, axial RoPE, over H/16 tokens
                           |
     d4 <- gate4(e4) <----+          H/16 -> H/8
-    d3 <- gate3(e3) <- d4           H/8  -> H/4   --tap--> cls (H/4, 16ch)
+    d3 <- gate3(e3) <- d4           H/8  -> H/4   --tap--> cls (H/4, n_cls ch)
     d2 <-       e2  <- d3           H/4  -> H/2, ungated
     d1 <-       e1  <- d2           H/2  -> H,   ungated  --tap--> hm  (H, 1ch)
 
@@ -173,7 +173,7 @@ class DetectorNet(nn.Module):
     after the blocks; RoPE frequencies geometric per axis (wavelength- rather
     than base-anchored here, see AxialRoPE)."""
 
-    def __init__(self, h, w, d=256, heads=8, n_blocks=2, rope_lambda_min=2.5):
+    def __init__(self, h, w, d=256, heads=8, n_blocks=2, rope_lambda_min=2.5, n_cls=16):
         super().__init__()
         assert h % 16 == 0 and w % 16 == 0, f"h, w must be multiples of 16, got {(h, w)}"
         self.pool = nn.MaxPool2d(2)
@@ -196,7 +196,7 @@ class DetectorNet(nn.Module):
         self.hm = nn.Sequential(nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(inplace=True),
                                 nn.Conv2d(32, 1, 1))
         self.cls = nn.Sequential(nn.Conv2d(128, 128, 3, padding=1), nn.ReLU(inplace=True),
-                                 nn.Conv2d(128, 16, 1))
+                                 nn.Conv2d(128, n_cls, 1))     # n_cls = board's inner-corner count
         nn.init.constant_(self.hm[-1].bias, -2.19)
         nn.init.constant_(self.cls[-1].bias, -2.19)
 

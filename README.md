@@ -94,7 +94,7 @@ PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/preflight.py --con
 ```
 PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/train_detector.py --config configs/default.yaml --name run1
 ```
-Retarget an already-trained trunk onto a differently-labelled board's corpus with `--freeze-trunk --resume runs/run1/ckpt_XXXXXXX.pt` — see the `freeze_trunk` note in Conventions for the mechanism; this path is correctly implemented (see `docs/TOOLING.md`) but has not yet been exercised end-to-end against a second physical board.
+Retarget an already-trained trunk onto a differently-labelled board's corpus with `--freeze-trunk --resume runs/run1/ckpt_XXXXXXX.pt` — see the `freeze_trunk` note in Conventions for the mechanism; this path is correctly implemented (see `docs/TOOLING.md`) but has not yet been exercised end-to-end against a second physical board. Retargeting onto a board with a *different corner count* (a different `squares`/`dictionary`) uses `--retarget-from` instead of `--resume` — see "Adapting to a new board" below.
 
 **5. Train the refiner** (Stage 2, separate run and checkpoint, board-agnostic):
 ```
@@ -130,7 +130,7 @@ PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/introspect.py --ck
 | `attn_blocks`, `attn_heads` | Bottleneck transformer depth (2) and head count (8); $d=256 \Rightarrow d_h = 32$. |
 | `rope_lambda_min_cells` | Fastest RoPE wavelength anchor, 2.5 cells (see Architecture; replaces the standard base-exponent RoPE parameterisation, which cannot satisfy this system's wavelength-span requirement at any base value). |
 
-**`board:`** — board identity. `squares: [5,5]`, `dictionary: DICT_5X5_50`, `marker_ids: [0, 11]` (12 markers, raster order), `marker_ratio: 0.7` (marker/square length ratio); `square_length_m` is the *only* runtime-variable field — metric scale enters solely at PnP, never at training time (the 16-channel class head is locked to the inner-corner count).
+**`board:`** — board identity, and (beyond `square_length_m`) fully retargetable: `squares: [5,5]` (must be square, `nx == ny` — `dcc/board.py:get_board` asserts it), `dictionary: DICT_5X5_50` (any `cv2.aruco` predefined-dictionary name), `marker_ids: [0, 11]` (12 markers, raster order — documentation only, not read by any code: `cv2.aruco.CharucoBoard` auto-assigns these from `squares`/`dictionary`), `marker_ratio: 0.7` (marker/square length ratio); `square_length_m` is metric scale, entering solely at PnP, never at training time. The class head's channel count and the Stage-3 canonical lattice both derive from `squares` as `n_cls = (nx-1)^2` (16 for the default board) — see "Adapting to a new board" below to retarget onto a differently-sized board.
 
 **`synth:`** — generator parameters.
 
@@ -168,9 +168,37 @@ PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/introspect.py --ck
 >
 > **RNG-through-`Generator` purity.** Every random draw in `dcc/board.py`, `dcc/synth.py`, `dcc/targets.py`, and `dcc/dataset.py` takes an explicit `numpy.random.Generator` argument; none of them reaches into the numpy global RNG, the stdlib `random` module, or cv2's RNG — enforced by a static grep in `tests/test_generator.py::test_determinism`. `dcc/trainutil.py` is the one legitimate exception: `save_ckpt`/`load_ckpt` capture and restore **torch's** global RNG state (`torch.get_rng_state()`) for bit-exact resume of the model side, which is orthogonal to data-generation purity — every numpy draw for sample generation still flows through an explicit, config-seeded `Generator` (`stream_seed = train_seed·1000 + resume_count`, bumped on every resume so a resumed run never replays the identical sample sequence).
 >
-> **Checkpoint contract.** One `.pt` file, `torch.save`d as a dict with exactly the keys `{step, resume_count, model, ema, optim, cfg, git_hash, torch_rng, last_val}` (`dcc/trainutil.py:save_ckpt`); `model`/`ema` are `state_dict()`s keyed on the stable module-name contract `e1..e5, pool, rope, blocks, norm, gate4, gate3, d4, d3, d2, d1, hm, cls` (`tests/test_model.py::test_stable_names` locks this). The board definition travels inside `cfg`, so a checkpoint is self-describing for retargeting.
+> **Checkpoint contract.** One `.pt` file, `torch.save`d as a dict with the keys `{step, resume_count, model, ema, optim, cfg, git_hash, torch_rng, last_val}` (`dcc/trainutil.py:save_ckpt`), plus an optional `retargeted_from: {path, board}` on every checkpoint written by a `--retarget-from` run (see "Adapting to a new board"); `model`/`ema` are `state_dict()`s keyed on the stable module-name contract `e1..e5, pool, rope, blocks, norm, gate4, gate3, d4, d3, d2, d1, hm, cls` (`tests/test_model.py::test_stable_names` locks this). The board definition travels inside `cfg`, so a checkpoint is self-describing for retargeting.
 >
 > **`freeze_trunk` boundary (model-level contract).** At the `nn.Module` level, `cls.*` is a disjoint, independently-addressable parameter subtree from everything else (`e1..e5`, `rope`, `blocks`, `norm`, `gate3`, `gate4`, `d1..d4`, `hm`) — a retarget onto a new board's corpus freezes every parameter except `cls.*` (trunk, both gates, the full decoder, and the heatmap head transfer unchanged; only the class head retrains) and holds frozen BatchNorm layers in `eval()` mode so their running statistics don't drift on the new corpus's images. The `--freeze-trunk` CLI flag correctly implements this contract: the parameter-trainability mask is gated by the same conditional that switches BatchNorm to `eval()` mode, so a default (non-retarget) run trains the full network and only an explicit retarget request restricts training to the class head. This is a corrected defect, not the original behaviour — **see `docs/TOOLING.md`'s `train_detector.py` section** for the mechanism and a short account of the earlier, unconditional version of this check that this project's own documentation-and-verification review caught.
+
+---
+
+## Adapting to a new board
+
+The board is a config block, not a hardcoded constant (`dcc/board.py:get_board`): everything downstream — the generator, the class head's channel count, and the Stage-3 canonical lattice — follows `configs/default.yaml`'s `board:` block automatically. Retargeting Conv-ChArT onto a physically different ChArUco board (a different `squares`/`dictionary`, not just a different corpus of the *same* board) is a config edit plus one training command, not a code change.
+
+**1. Point a config at the new board.** Copy `configs/default.yaml` and edit its `board:` block, e.g. a 4×4 `DICT_4X4_50` board:
+
+```yaml
+board:
+  squares: [4, 4]
+  dictionary: DICT_4X4_50
+  marker_ids: [0, 7]
+  marker_ratio: 0.7
+  square_length_m: null
+```
+
+`squares` must be square (`nx == ny` — rectangular boards have no defined corner-index convention here) and `dictionary` must be a name `cv2.aruco` actually predefines (`DICT_4X4_50`, `DICT_6X6_250`, ...); `get_board` asserts both. The class head's channel count and the canonical lattice both follow as `n_cls = (nx-1)^2` — 9 for the 4×4 example above, vs. the default board's 16 — with no further config needed: `dcc/synth.py:generate_sample` renders the board via `dcc.board.render_board(res, cfg["board"])`, so `tools/train_detector.py`'s own data stream (`SynthStream`/`SynthVal`) picks up the new board the moment `--config` points at it.
+
+**2. Retarget a trained trunk onto it:**
+```
+PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/train_detector.py \
+  --config myboard.yaml --retarget-from runs/run1/ckpt_0250000.pt --freeze-trunk --name myboard_run1
+```
+`--retarget-from` requires `--freeze-trunk` (an argparse error otherwise). The new run's model is built at `myboard.yaml`'s own `n_cls`, then loads every tensor from the base checkpoint *except* `cls.*` — the base's class head is discarded outright rather than reshaped, since it was sized for whichever board the base was trained on. Every checkpoint this run subsequently saves records `retargeted_from: {path, board}` (the base checkpoint's path and its own `cfg["board"]`) alongside the usual checkpoint contents (see the Checkpoint contract above), so a retargeted checkpoint stays self-describing about where it came from.
+
+**What transfers, what retrains.** `e1..e5`, `rope`, `blocks`, `norm`, `gate3`, `gate4`, `d1..d4`, `hm` — trunk, bottleneck attention, both gates, the decoder, and the heatmap head — load byte-for-byte from the base checkpoint and stay frozen (including BatchNorm running stats, held in `eval()` mode) for the run's duration, per the `freeze_trunk` boundary above. `cls` (the class head) is freshly initialised at the new board's `n_cls` and is the only part `--freeze-trunk` leaves trainable — exactly the same mechanism an ordinary same-board `--freeze-trunk --resume` retarget uses, except the class head here starts from scratch instead of resuming, since its shape has actually changed.
 
 ---
 

@@ -5,6 +5,15 @@ Refiner's numerical traces match the design's init-time invariants (checks
 readout->gate loop can express a known answer (check 6, the decisive one,
 skipped by --quick) -- in minutes, not 3 days into a wasted run.
 
+A generator_lock check runs first, ahead of and independent from checks 1-7:
+it never touches the model, so --quick/--device don't gate it. PASS requires
+tools/audit.py's last report.json to have every gate green AND
+dcc.trainutil.generator_fingerprint of the CURRENT repo+config to match the
+fingerprint that report recorded -- catching the case (a past real incident)
+where a generator defect passed every numeric check yet was visually wrong,
+so "audit + eyeball, then freeze" is enforced mechanically instead of by
+memory.
+
 Checks 1-5 and 7 all run on the SAME untrained (model, refiner) pair, built
 once with a fixed seed: init-time characterisation only, no weights are ever
 updated by any of them (backward populates .grad, never .step()s an
@@ -31,6 +40,8 @@ GRAD_GROUPS = ("e1", "e2", "e3", "e4", "e5", "blocks", "gate3", "gate4", "d1", "
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", default="configs/default.yaml")
+    p.add_argument("--audit-report", default="audit/report.json",
+                    help="tools/audit.py report.json checked by the generator_lock check")
     p.add_argument("--out", default="runs/preflight/")
     p.add_argument("--quick", action="store_true", help="skip check 6 (one_batch_overfit)")
     p.add_argument("--device", default=None, choices=["cuda", "cpu"], help="default: cuda if available")
@@ -52,7 +63,7 @@ def _report(name, status, **numbers):
 def _run_check(name, fn, *args, **kwargs):
     """Every check is run through this: an exception (missing bf16 kernel on
     an odd CPU, a transient OOM under GPU contention, ...) is a documented
-    graceful WARN, not a crash of the whole 7-check report -- the point of a
+    graceful WARN, not a crash of the whole 8-check report -- the point of a
     preflight suite is one complete picture per run, not "stops at the first
     surprise". A gate a check computed and DELIBERATELY returned FAIL for is
     untouched by this (only fn's *exceptions* land here). empty_cache() runs
@@ -101,6 +112,43 @@ def _param_grad_norm(params):
     import torch
     grads = [p.grad.reshape(-1) for p in params if p.grad is not None]
     return float(torch.cat(grads).norm()) if grads else 0.0
+
+
+# --------------------------------------------------------------------------- check 0 (generator lock, no model)
+
+def check_generator_lock(cfg, root, audit_report):
+    """Refuses to green-light training when the generator (dcc/board.py,
+    dcc/synth.py, dcc/targets.py, dcc/dataset.py) or the config knobs that
+    shape its output have drifted since `audit_report` was written: a change
+    that passes every numeric audit gate but is visibly wrong (the incident
+    this check exists for) is only caught by a human eyeballing the audit
+    overlays, so PASS requires both a byte-identical fingerprint AND that same
+    audit run's gates to have been green -- a stale report whose gates failed
+    is not a licence to train on its fingerprint alone."""
+    from dcc.trainutil import generator_fingerprint
+
+    path = Path(audit_report)
+    if not path.exists():
+        return "FAIL", {"reason": "no_audit_report", "path": str(path)}
+    try:
+        report = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        return "FAIL", {"reason": "no_audit_report", "path": str(path), "error": f"{type(e).__name__}: {e}"}
+
+    if "generator_fingerprint" not in report or "all_gates_passed" not in report:
+        return "FAIL", {"reason": "no_fingerprint_in_report", "path": str(path)}
+    if not report["all_gates_passed"]:
+        return "FAIL", {"reason": "audit_gates_failed", "path": str(path)}
+
+    current = generator_fingerprint(cfg, root)
+    recorded = report["generator_fingerprint"]
+    if current == recorded:
+        return "PASS", {"path": str(path)}
+
+    changed = [rel for rel, h in current["files"].items() if recorded["files"].get(rel) != h]
+    if current["config_sha1"] != recorded["config_sha1"]:
+        changed.append("config")
+    return "FAIL", {"reason": "fingerprint_mismatch", "path": str(path), "changed": changed}
 
 
 # --------------------------------------------------------------------------- checks 1-5, 7 (untrained net)
@@ -465,6 +513,7 @@ def main():
     from dcc.model import DetectorNet, Refiner
 
     cfg = load_config(args.config)
+    root = Path(__file__).resolve().parents[1]
     device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out_dir = Path(args.out) / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -486,6 +535,7 @@ def main():
     ct_t = torch.from_numpy(np.stack(cts_np)).float().to(device)
 
     results = [
+        _run_check("generator_lock", check_generator_lock, cfg, root, args.audit_report),
         _run_check("init_loss_prediction", check_init_loss_prediction, model, cfg, x, hm_t, ct_t, n_vis,
                    hms_np, cts_np),
         _run_check("translation_equivariance", check_translation_equivariance, model, records[0][0], device),

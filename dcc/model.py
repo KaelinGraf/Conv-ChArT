@@ -128,24 +128,37 @@ class DetectorNet(nn.Module):
     freeze_trunk boundary.
     """
 
-    def __init__(self, h, w, d=256, heads=8, n_blocks=2, rope_lambda_min=2.5, n_cls=16):
+    def __init__(self, h, w, d=256, heads=8, n_blocks=2, rope_lambda_min=2.5, n_cls=16, attend_div=16):
         super().__init__()
+        assert attend_div in (8, 16), f"attend_div must be 8 or 16, got {attend_div}"
         assert h % 16 == 0 and w % 16 == 0, f"h, w must be multiples of 16, got {(h, w)}"
+        self.attend_div = attend_div
         self.pool = nn.MaxPool2d(2)
         self.e1 = double_conv(1, 32)
         self.e2 = double_conv(32, 64)
         self.e3 = double_conv(64, 128)
-        self.e4 = double_conv(128, 256)
-        self.e5 = nn.Sequential(double_conv(256, 256),
-                                conv_bn_relu(256, 256, dilation=2),
-                                conv_bn_relu(256, 256, dilation=4))
-        self.rope = AxialRoPE(d // heads, h // 16, w // 16, rope_lambda_min)
+        if attend_div == 16:
+            self.e4 = double_conv(128, 256)
+            self.e5 = nn.Sequential(double_conv(256, 256),
+                                    conv_bn_relu(256, 256, dilation=2),
+                                    conv_bn_relu(256, 256, dilation=4))
+            grid_h, grid_w = h // 16, w // 16
+        else:
+            self.e4 = nn.Sequential(double_conv(128, 256),
+                                    conv_bn_relu(256, 256, dilation=2),
+                                    conv_bn_relu(256, 256, dilation=4))
+            grid_h, grid_w = h // 8, w // 8
+        self.rope = AxialRoPE(d // heads, grid_h, grid_w, rope_lambda_min)
         self.blocks = nn.ModuleList(Block(d, heads, self.rope) for _ in range(n_blocks))
         self.norm = nn.LayerNorm(d, eps=1e-6)
-        self.gate4 = AttnGate(256, 256, 128)
-        self.gate3 = AttnGate(128, 256, 64)
-        self.d4 = conv_bn_relu(256 + 256, 256)
-        self.d3 = conv_bn_relu(256 + 128, 128)
+        if attend_div == 16:
+            self.gate4 = AttnGate(256, 256, 128)
+            self.gate3 = AttnGate(128, 256, 64)
+            self.d4 = conv_bn_relu(256 + 256, 256)
+            self.d3 = conv_bn_relu(256 + 128, 128)
+        else:
+            self.gate3 = AttnGate(128, 256, 64)
+            self.d3 = conv_bn_relu(256 + 128, 128)
         self.d2 = conv_bn_relu(128 + 64, 64)
         self.d1 = conv_bn_relu(64 + 32, 32)
         self.hm = nn.Sequential(nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(inplace=True),
@@ -159,15 +172,21 @@ class DetectorNet(nn.Module):
         s1 = self.e1(x)
         s2 = self.e2(self.pool(s1))
         s3 = self.e3(self.pool(s2))
-        s4 = self.e4(self.pool(s3))
-        z = self.e5(self.pool(s4))
+        if self.attend_div == 16:
+            s4 = self.e4(self.pool(s3))
+            z = self.e5(self.pool(s4))
+        else:
+            z = self.e4(self.pool(s3))
         B, C, Hb, Wb = z.shape
         t = z.flatten(2).transpose(1, 2)
         for blk in self.blocks:
             t = blk(t)
         z = self.norm(t).transpose(1, 2).reshape(B, C, Hb, Wb)
-        y = self.d4(torch.cat([up2(z), self.gate4(s4, z)], 1))
-        y = self.d3(torch.cat([up2(y), self.gate3(s3, y)], 1))
+        if self.attend_div == 16:
+            y = self.d4(torch.cat([up2(z), self.gate4(s4, z)], 1))
+            y = self.d3(torch.cat([up2(y), self.gate3(s3, y)], 1))
+        else:
+            y = self.d3(torch.cat([up2(z), self.gate3(s3, z)], 1))
         cls = self.cls(y)
         y = self.d2(torch.cat([up2(y), s2], 1))
         y = self.d1(torch.cat([up2(y), s1], 1))

@@ -359,8 +359,10 @@ def _apply_occlusion(work, rng, occ, w2, h2):
     return holes
 
 
-def _apply_photometric(work, rng, ph, w2, h2):
+def _apply_photometric(work, rng, ph, w2, h2, window_origin=None):
     """SD-03 photometric set, in the pinned order; each gated by its own probability."""
+    ph_h, ph_w = work.shape[:2]
+    wx0, wy0 = (0, 0) if window_origin is None else window_origin
     if rng.random() < ph["gauss_noise_p"]:
         std = rng.uniform(*ph["noise_std"])
         work = work + rng.normal(0, std, work.shape).astype(np.float32)
@@ -380,9 +382,9 @@ def _apply_photometric(work, rng, ph, w2, h2):
         work = cv2.GaussianBlur(work, (k, k), 0)
     if rng.random() < ph["speckle_p"]:
         std = rng.uniform(*ph["speckle_std"])
-        work = work * (1 + rng.normal(0, std, (h2, w2, 1)).astype(np.float32))
+        work = work * (1 + rng.normal(0, std, (ph_h, ph_w, 1)).astype(np.float32))
     if rng.random() < ph["mult_noise_p"]:
-        field = rng.uniform(*ph["mult_noise_range"], size=(h2, w2, 1)).astype(np.float32)
+        field = rng.uniform(*ph["mult_noise_range"], size=(ph_h, ph_w, 1)).astype(np.float32)
         work = work * field
     if rng.random() < ph["brightness_p"]:
         b = rng.uniform(*ph["brightness_range"])
@@ -402,7 +404,7 @@ def _apply_photometric(work, rng, ph, w2, h2):
         ax, ay = rng.uniform(20, 120), rng.uniform(20, 120)
         ang = rng.uniform(0, np.pi)
         peak = rng.uniform(40, 200)
-        ys, xs = np.mgrid[0:h2, 0:w2].astype(np.float32)
+        ys, xs = np.mgrid[wy0:wy0 + ph_h, wx0:wx0 + ph_w].astype(np.float32)
         xr = (xs - cx) * np.cos(ang) + (ys - cy) * np.sin(ang)
         yr = -(xs - cx) * np.sin(ang) + (ys - cy) * np.cos(ang)
         glare = peak * np.exp(-0.5 * ((xr / ax) ** 2 + (yr / ay) ** 2))
@@ -414,7 +416,7 @@ def _apply_photometric(work, rng, ph, w2, h2):
         dx, dy = mag * np.cos(ang), mag * np.sin(ang)
         blurred = cv2.GaussianBlur(work, (3, 3), 0)
         Mshift = np.array([[1, 0, dx], [0, 1, dy]], dtype=np.float64)
-        shifted = cv2.warpAffine(blurred, Mshift, (w2, h2), flags=cv2.INTER_LINEAR,
+        shifted = cv2.warpAffine(blurred, Mshift, (ph_w, ph_h), flags=cv2.INTER_LINEAR,
                                   borderMode=cv2.BORDER_REFLECT)
         work = (1 + alpha) * work - alpha * shifted
     return work

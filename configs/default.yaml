@@ -31,6 +31,7 @@ synth:
   refiner_max_corners: 8
   refiner_val_composites: 1250
   refiner_generic_frac: 0.0
+  refiner_full_frac: 0.08
   rot_deg: 180
   shear_deg: 35
   translate_frac: 0.45

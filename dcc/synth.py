@@ -510,7 +510,12 @@ def generate_sample(cfg, rng, bg_files, s=None, size_mult=1, force_negative=None
     this slice's file, so it can't yet be given the explicit-pass-in
     treatment bg_files already gets (see _cached_cutouts)."""
     W, H = cfg["input_size"]
+    # size_mult may be fractional (refiner_res_mult 2.5 at 640x480 -> the
+    # 1600x1200 sensor frame); the canvas itself must land on whole pixels.
     w2, h2 = W * size_mult, H * size_mult
+    assert w2 == int(w2) and h2 == int(h2), \
+        f"input_size {cfg['input_size']} x size_mult {size_mult} is not a whole-pixel canvas"
+    w2, h2 = int(w2), int(h2)
     negative = force_negative if force_negative is not None else rng.random() < cfg["negative_p"]
     if cutout_files is None:
         cutout_files = _cached_cutouts(cfg["synth"].get("cutouts", {}).get("path"))

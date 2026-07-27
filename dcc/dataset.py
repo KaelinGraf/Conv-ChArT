@@ -9,6 +9,7 @@ import torch
 import yaml
 from torch.utils.data import Dataset, IterableDataset, get_worker_info
 
+from dcc.board import n_corners
 from dcc.synth import cut_refiner_crops, generate_sample, list_backgrounds, make_generic_crop
 from dcc.targets import render_class_targets, render_heatmap, render_refiner_target
 
@@ -25,7 +26,7 @@ def _render_detector_targets(cfg, record):
     vis = np.array([c["visible"] for c in corners], dtype=bool)
     idx = np.array([c["index"] for c in corners], dtype=int)
     heatmap = render_heatmap(pts, vis, (w, h), sigma=cfg["sigma_hm"])
-    classes = render_class_targets(pts, vis, idx, (w, h), sigma=cfg["sigma_cls"])
+    classes = render_class_targets(pts, vis, idx, (w, h), sigma=cfg["sigma_cls"], n_cls=n_corners(cfg.get("board")))
     image = torch.from_numpy(record["image"]).float().unsqueeze(0) / 255.0
     return {"image": image, "heatmap": torch.from_numpy(heatmap), "classes": torch.from_numpy(classes),
             "n_vis": int(vis.sum())}

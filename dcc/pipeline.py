@@ -15,15 +15,29 @@ Coordinate spaces (pixel-centre convention, points are (x, y)):
             distortion is removed.
 
 Canonical lattice points are UNITLESS (col+1, row+1) for corner index
-i = row*4+col (row=i//4, col=i%4) -- board.py's indexing, and
-tools/gen_eval_pose.py's K@[r1|r2|t] lattice construction.
+i = row*n+col (row=i//n, col=i%n, n the board's per-side inner-corner
+count) -- board.py's indexing, and tools/gen_eval_pose.py's K@[r1|r2|t]
+lattice construction, both built from canon_lattice below.
 """
+import math
+
 import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-_CANON = np.array([[(i % 4) + 1.0, (i // 4) + 1.0] for i in range(16)], dtype=np.float64)
+from dcc.board import n_corners
+
+
+def canon_lattice(n):
+    """Canonical lattice for an n x n grid of inner corners (unitless col+1, row+1; corner i: row =
+    i // n, col = i % n) -- board.py's row-major indexing convention, generalised from the
+    default 5x5 board's n=4 (16 corners).
+    """
+    return np.array([[(i % n) + 1.0, (i // n) + 1.0] for i in range(n * n)], dtype=np.float64)
+
+
+_CANON = canon_lattice(4)
 
 
 def peaks(hm_sigmoid, tau_hm, top_k=64):
@@ -119,18 +133,20 @@ def undistort(xy_sensor, K, dist):
     return out.reshape(-1, 2).astype(np.float64)
 
 
-def lattice_gate(xy, idx, conf, tol=3.0):
+def lattice_gate(xy, idx, conf, tol=3.0, n=4):
     """RANSAC-fit canonical-lattice -> image homography over the ID'd subset (canonical points
-    UNITLESS).
+    UNITLESS, an n x n grid -- n=4 the default 5x5 board's 16 corners, see canon_lattice;
+    callers derive n from cfg["board"]).
     """
     xy = np.asarray(xy, dtype=np.float64).reshape(-1, 2)
     idx = np.asarray(idx).reshape(-1)
-    n = len(idx)
-    inlier_mask, demoted_mask = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+    lattice = _CANON if n == 4 else canon_lattice(n)
+    cnt = len(idx)
+    inlier_mask, demoted_mask = np.zeros(cnt, dtype=bool), np.zeros(cnt, dtype=bool)
     idd = np.nonzero(idx >= 0)[0]
     if len(idd) < 4:
         return None, inlier_mask, demoted_mask, "too_few"
-    canon = _CANON[idx[idd]]
+    canon = lattice[idx[idd]]
     if np.linalg.svd(canon - canon.mean(axis=0), compute_uv=False)[1] < 1e-6:
         return None, inlier_mask, demoted_mask, "collinear"
     H, mask = cv2.findHomography(canon.astype(np.float32), xy[idd].astype(np.float32),
@@ -142,15 +158,17 @@ def lattice_gate(xy, idx, conf, tol=3.0):
     return H, inlier_mask, demoted_mask, ("vacuous" if len(idd) == 4 else None)
 
 
-def recover(H, xy_all, idx, conf, tol):
-    """Project all 16 canonical corners through H; an ID-less detection (idx < 0) within tol of a
-    projected corner inherits its index (source 'recovered').
+def recover(H, xy_all, idx, conf, tol, n=4):
+    """Project all n^2 canonical corners through H (n=4 the default 5x5 board's 16 corners, see
+    canon_lattice; callers derive n from cfg["board"]); an ID-less detection (idx < 0) within
+    tol of a projected corner inherits its index (source 'recovered').
     """
     xy_all = np.asarray(xy_all, dtype=np.float64).reshape(-1, 2)
     idx_in = np.asarray(idx).reshape(-1)
     idx_out = idx_in.copy()
     recovered_mask = np.zeros(len(idx_in), dtype=bool)
-    proj = np.hstack([_CANON, np.ones((16, 1))]) @ H.T
+    lattice = _CANON if n == 4 else canon_lattice(n)
+    proj = np.hstack([lattice, np.ones((n * n, 1))]) @ H.T
     proj = proj[:, :2] / proj[:, 2:3]
     claimed = set(idx_in[idx_in >= 0].tolist())
     for i in np.nonzero(idx_in < 0)[0]:
@@ -167,9 +185,10 @@ def recover(H, xy_all, idx, conf, tol):
     return idx_out, recovered_mask, corroborated
 
 
-def pnp(xy_pinhole, idx, K, square_length_m):
+def pnp(xy_pinhole, idx, K, square_length_m, n=4):
     """cv2.solvePnPGeneric SOLVEPNP_IPPE on the ID'd (idx >= 0) subset, object points = canonical
-    lattice * square_length_m (z=0), distCoeffs None (already undistorted).
+    lattice (n x n grid, n=4 the default 5x5 board, see canon_lattice; callers derive n from
+    cfg["board"]) * square_length_m (z=0), distCoeffs None (already undistorted).
     """
     xy_pinhole = np.asarray(xy_pinhole, dtype=np.float64).reshape(-1, 2)
     idx = np.asarray(idx).reshape(-1)
@@ -177,7 +196,8 @@ def pnp(xy_pinhole, idx, K, square_length_m):
     n_used = len(ok)
     if n_used < 4:
         return None, None, None, False, n_used, "too_few_correspondences"
-    obj = (np.hstack([_CANON[idx[ok]], np.zeros((n_used, 1))]) * square_length_m).reshape(-1, 1, 3)
+    lattice = _CANON if n == 4 else canon_lattice(n)
+    obj = (np.hstack([lattice[idx[ok]], np.zeros((n_used, 1))]) * square_length_m).reshape(-1, 1, 3)
     img = xy_pinhole[ok].reshape(-1, 1, 2)
     _, rvecs, tvecs, errs = cv2.solvePnPGeneric(obj, img, K, None, flags=cv2.SOLVEPNP_IPPE)
     if len(rvecs) == 0:
@@ -196,7 +216,9 @@ def detect(frame_sensor, model, refiner, K=None, dist=None, cfg=None):
     cfg = cfg or {"tau_hm": 0.3, "tau_id": 0.5, "lattice_tol_px": 3.0, "input_size": [1600, 1200]}
     tau_hm, tau_id, tol = cfg["tau_hm"], cfg["tau_id"], cfg["lattice_tol_px"]
     W_in, H_in = cfg["input_size"]
-    sqlen = (cfg.get("board") or {}).get("square_length_m") or 1.0
+    bcfg = cfg.get("board") or {}
+    sqlen = bcfg.get("square_length_m") or 1.0
+    n = math.isqrt(n_corners(bcfg))
     model.eval()
     refiner.eval()
 
@@ -225,7 +247,7 @@ def detect(frame_sensor, model, refiner, K=None, dist=None, cfg=None):
                                                [0, max(Ws, Hs), (Hs - 1) / 2], [0, 0, 1]], dtype=np.float64)
     xy_pinhole = undistort(xy_sensor, K_eff, dist)
 
-    H, inlier_mask, demoted_mask, degenerate = lattice_gate(xy_pinhole, idx_thr, p_id, tol)
+    H, inlier_mask, demoted_mask, degenerate = lattice_gate(xy_pinhole, idx_thr, p_id, tol, n)
     idx_final = idx_thr.copy()
     idx_final[demoted_mask] = -1
     recovered_mask = np.zeros(len(idx_final), dtype=bool)
@@ -233,13 +255,13 @@ def detect(frame_sensor, model, refiner, K=None, dist=None, cfg=None):
     ambiguous, reason = False, degenerate
 
     if H is not None:
-        idx_final, recovered_mask, corroborated = recover(H, xy_pinhole, idx_final, p_id, tol)
+        idx_final, recovered_mask, corroborated = recover(H, xy_pinhole, idx_final, p_id, tol, n)
         if K is None:
             reason = "no_intrinsics"
         elif degenerate == "vacuous" and not corroborated:
             reason = "vacuous_uncorroborated"
         else:
-            rvec, tvec, rms, ambiguous, _, reason = pnp(xy_pinhole, idx_final, K, sqlen)
+            rvec, tvec, rms, ambiguous, _, reason = pnp(xy_pinhole, idx_final, K, sqlen, n)
 
     corners = []
     for i in range(len(idx_final)):

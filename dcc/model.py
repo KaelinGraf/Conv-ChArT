@@ -253,6 +253,18 @@ class DetectorNet(nn.Module):
         return self.hm(y), cls
 
 
+def detector_kwargs(cfg):
+    """DetectorNet's config-tunable constructor kwargs (attend_div, n_blocks,
+    heads, rope_lambda_min), read from a loaded cfg dict with the exact same
+    defaults DetectorNet's own signature uses -- the one place
+    tools/train_detector.py and tools/preflight.py both read these from, so
+    the two model-construction sites can't drift apart. n_cls is
+    deliberately excluded: it's derived from cfg["board"] via
+    dcc.board.n_corners, not a flat cfg key."""
+    return {"attend_div": cfg.get("attend_div", 16), "n_blocks": cfg.get("attn_blocks", 2),
+            "heads": cfg.get("attn_heads", 8), "rope_lambda_min": cfg.get("rope_lambda_min_cells", 2.5)}
+
+
 class Refiner(nn.Module):
     """Sub-pixel refiner. Board-agnostic, size-fixed: (B,1,24,24) crop
     cut from the sensor-resolution frame -> (B,1,64,64) LOGITS over the

@@ -34,6 +34,14 @@ materialises softmax(QK^T)) for P2. If a hooked module lacks these methods,
 its diagnostic is silently omitted after one warning: this is instrumentation
 around a dcc.model contract that could still change, not an acceptance gate,
 so it must never crash a training run.
+
+wandb mirroring is config-gated (cfg["train"]["wandb"]["enabled"], default
+false) and strictly best-effort alongside metrics.jsonl, never a replacement
+for it: every _wandb_* call swallows its own exceptions (warn-once via
+_warn_once) so a telemetry outage (bad API key, no network, a wandb-side
+error) can never crash or stall the run. When enabled, the run ID and URL
+print as an unmissable `WANDB_RUN_ID=... WANDB_RUN_URL=...` line right after
+init, for a supervising process to parse.
 """
 import argparse
 import sys
@@ -125,6 +133,91 @@ def early_stop_should_trigger(history, step, es_cfg):
         series.append(_early_stop_series(window, lambda h, k=name: h["m02"].get(k), "higher"))
     series.append(_early_stop_series(window, lambda h: (h["m04"] or {}).get("accuracy"), "higher"))
     return not any(s is not None and s > 0.01 for s in series)
+
+
+def _wandb_init(cfg, wandb_cfg, run_dir, name):
+    """Best-effort wandb run construction, gated by cfg["train"]["wandb"]
+    ["enabled"] (default false) -- None when disabled. Any failure here
+    (missing package, bad API key, no network) is a warn-once and training
+    proceeds without telemetry: metrics.jsonl remains the source of truth
+    regardless, same contract _wandb_log/_wandb_log_preview/_wandb_finish
+    below all share."""
+    if not wandb_cfg.get("enabled", False):
+        return None
+    try:
+        import wandb
+        run = wandb.init(project=wandb_cfg.get("project", "conv-chart"), name=name,
+                          mode=wandb_cfg.get("mode", "online"), dir=str(run_dir), config=cfg)
+        # Unmissable and grep-able: a supervising agent locates the run from this line.
+        print(f"[train_detector] WANDB_RUN_ID={run.id} WANDB_RUN_URL={run.get_url()}")
+        return run
+    except Exception as e:
+        _warn_once("wandb", f"[train_detector] wandb init failed ({type(e).__name__}: {e}); "
+                   "continuing without telemetry.")
+        return None
+
+
+def _wandb_flatten(fields):
+    """JsonlLogger-shaped kwargs -> wandb's flat metric namespace: a scalar
+    kwarg logs under its own key unchanged; a dict-valued kwarg (val=result,
+    full_val=result, early_stop={...}) becomes "<key>/<nested path,
+    underscore-joined>" per leaf -- e.g. val={"m01": {"mean": 1.2}} ->
+    {"val/m01_mean": 1.2}. None leaves are dropped (an unavailable metric,
+    e.g. m04 before dcc.pipeline is importable, shouldn't open a wandb chart
+    that would just stay empty)."""
+    def walk(prefix, v, sep):
+        if isinstance(v, dict):
+            out = {}
+            for k, vv in v.items():
+                out.update(walk(f"{prefix}{sep}{k}", vv, "_"))
+            return out
+        return {} if v is None else {prefix: v}
+
+    out = {}
+    for key, val in fields.items():
+        out.update(walk(key, val, "/"))
+    return out
+
+
+def _wandb_log(run, step, **fields):
+    """Mirrors exactly what logger.log(step, **fields) receives -- call this
+    alongside every JsonlLogger.log call, same kwargs, so the two stay in
+    lockstep by construction rather than by separately-maintained call sites."""
+    if run is None:
+        return
+    try:
+        run.log(_wandb_flatten(fields), step=step)
+    except Exception as e:
+        _warn_once("wandb", f"[train_detector] wandb log failed ({type(e).__name__}: {e}); "
+                   "continuing without further telemetry.")
+
+
+def _wandb_log_preview(run, preview_dir, step, group):
+    """Mirrors run_validation's first-3 preview PNGs -- already written to
+    preview_dir at these exact filenames by run_validation itself -- as
+    wandb.Image, keyed <group>/preview_<i>. Reads the files back rather than
+    threading a new return value through run_validation, so its existing
+    contract (and the tests that exercise it) stay untouched."""
+    if run is None:
+        return
+    try:
+        import wandb
+        imgs = {f"{group}/preview_{i}": wandb.Image(str(p))
+                for i in range(3) if (p := preview_dir / f"step_{step:07d}_val{i}.png").exists()}
+        if imgs:
+            run.log(imgs, step=step)
+    except Exception as e:
+        _warn_once("wandb", f"[train_detector] wandb preview log failed ({type(e).__name__}: {e}); "
+                   "continuing without further telemetry.")
+
+
+def _wandb_finish(run):
+    if run is None:
+        return
+    try:
+        run.finish()
+    except Exception as e:
+        _warn_once("wandb", f"[train_detector] wandb finish failed ({type(e).__name__}: {e}).")
 
 
 def _val_targets(cfg, record):
@@ -379,7 +472,7 @@ def main():
     from dcc.board import n_corners
     from dcc.dataset import SynthStream, SynthVal, load_config
     from dcc.losses import detector_loss  # noqa: F401 -- imported here so a missing dcc.losses fails fast
-    from dcc.model import DetectorNet
+    from dcc.model import DetectorNet, detector_kwargs
     from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, load_retarget_ckpt, param_groups, save_ckpt
 
     assert torch.cuda.is_available(), "CUDA required"
@@ -394,9 +487,9 @@ def main():
 
     W, H = cfg["input_size"]
     n_cls = n_corners(cfg.get("board"))
-    attend_div = cfg.get("attend_div", 16)
-    model = DetectorNet(H, W, n_cls=n_cls, attend_div=attend_div).to(device, memory_format=torch.channels_last)
-    eval_model = DetectorNet(H, W, n_cls=n_cls, attend_div=attend_div).to(device, memory_format=torch.channels_last)
+    model = DetectorNet(H, W, n_cls=n_cls, **detector_kwargs(cfg)).to(device, memory_format=torch.channels_last)
+    eval_model = DetectorNet(H, W, n_cls=n_cls, **detector_kwargs(cfg)).to(device,
+                                                                            memory_format=torch.channels_last)
 
     freeze = args.freeze_trunk or cfg.get("freeze_trunk", False)
     model.train()
@@ -428,6 +521,7 @@ def main():
     logger = JsonlLogger(run_dir / "metrics.jsonl")
     preview_dir = run_dir / "preview"
     preview_dir.mkdir(parents=True, exist_ok=True)
+    wandb_run = _wandb_init(cfg, tcfg.get("wandb", {}), run_dir, args.name)
 
     step, resume_count, last_val = 0, 0, None
     if args.resume:
@@ -504,8 +598,10 @@ def main():
         elapsed = time.time() - t0 - val_time
         step += 1
         micro, accum_loss = 0, 0.0
-        logger.log(step=step, loss=avg_loss, lr=lr, grad_norm=float(grad_norm),
-                   samples_per_s=n_samples / elapsed if elapsed > 0 else 0.0)
+        train_fields = {"loss": avg_loss, "lr": lr, "grad_norm": float(grad_norm),
+                         "samples_per_s": n_samples / elapsed if elapsed > 0 else 0.0}
+        logger.log(step=step, **train_fields)
+        _wandb_log(wandb_run, step, **train_fields)
         if step % 10 == 0 or step <= 10:
             print(f"[step {step}/{total_steps}] loss={avg_loss:.4f} lr={lr:.3e} "
                   f"grad_norm={float(grad_norm):.3f} samples/s={n_samples / elapsed:.2f}")
@@ -518,6 +614,8 @@ def main():
             print(f"[val step {step}] loss={result['val_loss']} m01={result['m01']} m02={result['m02']} "
                   f"m04={result['m04']} diag={result['diag']}")
             logger.log(step=step, val=result)
+            _wandb_log(wandb_run, step, val=result)
+            _wandb_log_preview(wandb_run, preview_dir, step, "val")
             last_val = result
             val_time += time.time() - v0
 
@@ -529,6 +627,8 @@ def main():
             print(f"[FULL val step {step}] loss={full_result['val_loss']} m01={full_result['m01']} "
                   f"m02={full_result['m02']} m04={full_result['m04']}")
             logger.log(step=step, full_val=full_result)
+            _wandb_log(wandb_run, step, full_val=full_result)
+            _wandb_log_preview(wandb_run, preview_dir, step, "full_val")
             last_val = full_result
             ckpt_path = run_dir / f"ckpt_{step:07d}.pt"
             save_ckpt(ckpt_path, step, resume_count, model, ema, optim, cfg, last_val,
@@ -542,9 +642,11 @@ def main():
                 # checkpoint or cfg as early-stopped, so a later --resume from ckpt_path
                 # just continues the ordinary loop past this step, unaware it happened.
                 window = full_val_history[-es_cfg["patience"]:]
-                logger.log(step=step, early_stop={"window_steps": [h["step"] for h in window],
-                           "window": [{"step": h["step"], "m01": h["m01"], "m02": h["m02"], "m04": h["m04"]}
-                                      for h in window]})
+                early_stop_record = {"window_steps": [h["step"] for h in window],
+                                      "window": [{"step": h["step"], "m01": h["m01"], "m02": h["m02"],
+                                                  "m04": h["m04"]} for h in window]}
+                logger.log(step=step, early_stop=early_stop_record)
+                _wandb_log(wandb_run, step, early_stop=early_stop_record)
                 print(f"[train_detector] early stop: flat and tail_frac_gt4px<={es_cfg['tail_gate']} over "
                       f"the last {es_cfg['patience']} full-vals (steps {[h['step'] for h in window]}); "
                       f"stopping at step {step}, checkpoint={ckpt_path}")
@@ -553,6 +655,7 @@ def main():
     elapsed = time.time() - t0 - val_time
     print(f"[train_detector] done: step={step} train_elapsed={elapsed:.1f}s val_elapsed={val_time:.1f}s "
           f"samples/s={n_samples / elapsed if elapsed > 0 else 0.0:.2f}")
+    _wandb_finish(wandb_run)
 
 
 if __name__ == "__main__":

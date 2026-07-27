@@ -35,6 +35,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 GRAD_GROUPS = ("e1", "e2", "e3", "e4", "e5", "blocks", "gate3", "gate4", "d1", "d2", "d3", "d4", "hm", "cls")
+# Superset across both DetectorNet variants: e5/gate4/d4 exist only at attend_div=16
+# (see dcc.model.DetectorNet) -- consumers filter to the groups the model actually has.
 
 
 def build_parser():
@@ -184,18 +186,26 @@ def check_init_loss_prediction(model, cfg, x, hm_t, ct_t, n_vis, hms_np, cts_np)
 
 
 def check_translation_equivariance(model, image, device):
-    """f in eval mode (BN batch-independent) vs. a 16-px (one attention cell)
+    """f in eval mode (BN batch-independent) vs. an attend_div-px (one full
+    attention-grid cell -- 16 px native, 8 px for the attend_div=8 variant)
     input roll; Pearson r between shift(f(x)) and f(shift(x)) over the
-    interior, excluding a 64-px border where the roll wraps unphysically."""
+    interior, excluding a 64-px border where the roll wraps unphysically.
+    The roll tracks model.attend_div rather than a fixed 16: the property
+    this check needs is a shift by an exact integer number of grid cells (any
+    integer count re-indexes RoPE's tokens cleanly; a fractional-cell shift
+    would not), and the crispest version of that test is exactly ONE cell --
+    a fixed 16-px roll against an 8-px-stride model would silently degrade
+    to testing 2-cell equivariance instead."""
     import torch
     model.eval()
     H, W = image.shape
     x = torch.from_numpy(image).float().div(255.0).view(1, 1, H, W).to(device)
-    x_shift = torch.roll(x, shifts=16, dims=-1)
+    shift = model.attend_div
+    x_shift = torch.roll(x, shifts=shift, dims=-1)
     with torch.no_grad():
         hm1 = torch.sigmoid(model(x)[0])[0, 0]
         hm2 = torch.sigmoid(model(x_shift)[0])[0, 0]
-    hm1_shifted = torch.roll(hm1, shifts=16, dims=-1)
+    hm1_shifted = torch.roll(hm1, shifts=shift, dims=-1)
     m = 64
     r = _pearson(hm1_shifted[m:H - m, m:W - m], hm2[m:H - m, m:W - m])
     return ("PASS" if r > 0.99 else "FAIL"), {"r": r}
@@ -204,10 +214,13 @@ def check_translation_equivariance(model, image, device):
 def check_rope_relativity(model, cfg, device):
     """Same 64x64 high-contrast patch (the board render's central 4-square
     checker corner -- max local contrast by construction) pasted onto a flat
-    128-gray canvas at two positions exactly 64 px (4 attention cells) apart.
-    Block-0 attention rows recomputed fp32 via qkv_heads, exactly the recipe
+    128-gray canvas at two positions exactly 64 px apart -- an integer number
+    of attention cells either way (4 cells at attend_div=16, 8 cells at
+    attend_div=8; the grid itself, gh/gw, scales with model.attend_div so the
+    cell-index arithmetic below is correct for either variant). Block-0
+    attention rows recomputed fp32 via qkv_heads, exactly the recipe
     tools/introspect.py::panel_attention uses (softmax(QK^T/sqrt(d)), mean
-    over heads). One map sliced by 4 grid-columns must correlate with the
+    over heads). One map sliced by dcols grid-columns must correlate with the
     other over their plain (non-wrapping) overlap -- relative-offset content
     dependence only, no absolute-position leakage."""
     import numpy as np
@@ -221,10 +234,11 @@ def check_rope_relativity(model, cfg, device):
     c = render_res // 2
     patch = board_img[c - 32:c + 32, c - 32:c + 32]
 
+    attend_div = model.attend_div   # grid stride: 16 native, 8 for the attend_div=8 variant
     shift = 64
     y0 = H_in // 2 - 32
     x0 = max(64, W_in // 2 - 128)
-    gh, gw = H_in // 16, W_in // 16
+    gh, gw = H_in // attend_div, W_in // attend_div
     maps = []
     for xoff in (x0, x0 + shift):
         canvas = np.full((H_in, W_in), 128, dtype=np.uint8)
@@ -241,10 +255,10 @@ def check_rope_relativity(model, cfg, device):
         with torch.no_grad():
             q, k, _v = blk.qkv_heads(blk.n1(captured["x_in"]))
             A = torch.softmax((q.float() @ k.float().transpose(-2, -1)) / q.shape[-1] ** 0.5, dim=-1)
-        tok = int(np.clip(qy // 16, 0, gh - 1)) * gw + int(np.clip(qx // 16, 0, gw - 1))
+        tok = int(np.clip(qy // attend_div, 0, gh - 1)) * gw + int(np.clip(qx // attend_div, 0, gw - 1))
         maps.append(A[0, :, tok, :].mean(dim=0).reshape(gh, gw).detach())
 
-    dcols = shift // 16
+    dcols = shift // attend_div
     r = _pearson(maps[0][:, :gw - dcols], maps[1][:, dcols:])
     return ("PASS" if r > 0.95 else "FAIL"), {"r": r}
 
@@ -275,7 +289,7 @@ def check_gradient_balance(model, cfg, x, hm_t, ct_t, n_vis):
     model.zero_grad(set_to_none=True)
     hm_logit, cls_logit = model(x)
     detector_loss(hm_logit, cls_logit, hm_t, ct_t, n_vis, cfg["lambda_cls"]).backward()
-    table = {g: _param_grad_norm(getattr(model, g).parameters()) for g in GRAD_GROUPS}
+    table = {g: _param_grad_norm(getattr(model, g).parameters()) for g in GRAD_GROUPS if hasattr(model, g)}
     all_finite = all(math.isfinite(v) for v in table.values())
     all_nonzero = all(v > 0 for v in table.values())
 
@@ -510,7 +524,7 @@ def main():
     import numpy as np
     import torch
     from dcc.dataset import SynthVal, load_config
-    from dcc.model import DetectorNet, Refiner
+    from dcc.model import DetectorNet, Refiner, detector_kwargs
 
     cfg = load_config(args.config)
     root = Path(__file__).resolve().parents[1]
@@ -521,7 +535,7 @@ def main():
 
     W, H = cfg["input_size"]
     torch.manual_seed(0)
-    model = DetectorNet(H, W).to(device)
+    model = DetectorNet(H, W, **detector_kwargs(cfg)).to(device)
     refiner = Refiner().to(device)
 
     val_ds = SynthVal(cfg, cfg["synth"]["val_size"], cfg["synth"]["val_seed"])

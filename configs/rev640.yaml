@@ -102,7 +102,7 @@ train:
   early_stop:
     enabled: true
     patience: 3
-    min_steps: 100000
+    min_steps: 162000   # Kaelin 2026-07-27 20:00: no early stop before 8am (~12h at 120 samples/s); earliest qualifying full-val boundary is then 175k
     tail_gate: 0.01
 refiner_train:
   batch: 256

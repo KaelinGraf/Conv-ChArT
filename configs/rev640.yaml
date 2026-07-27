@@ -79,8 +79,8 @@ synth:
     ghost_alpha: [0.1, 0.5]
     ghost_shift_px: [1, 4]
 train:
-  batch: 4
-  accum: 8
+  batch: 16
+  accum: 2
   steps: 250000
   lr: 3.0e-4
   lr_floor: 3.0e-6

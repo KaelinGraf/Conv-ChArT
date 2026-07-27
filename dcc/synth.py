@@ -120,6 +120,33 @@ registers a bounding-square hole through generate_sample's own `holes` list
 use), via an optional holes_out list _apply_photometric appends to in
 place -- not a return-value change, for the same tests/test_generator.py
 and tools/gen_eval_pose.py single-return-value-callers reason as above.
+
+Rev-3 differencing physics (task #31, Kaelin's 940nm rig photometry,
+2026-07-28): the rev-2 differencing model treated I_lit/I_unlit as two
+independently-scaled copies of the composite and applied sensor noise
+AFTER subtraction, at the (small) residual's own rate. The real rig pair is
+(daylight alone) vs (daylight + a modest active LED) -- a LARGE shared
+pedestal with a SMALL additive increment, so I_lit = work * (ambient +
+illum_lobe) (illum_lobe now the LED's own increment, not the frame's whole
+brightness) while I_unlit = work * ambient is unchanged in form. Each frame
+is independently clipped to [0, 255] (real sensor wells -- a saturated lit
+region produces physically-correct contrast-inverted residue after
+subtraction) and independently given Poissonian-Gaussian sensor noise
+(Foi et al. 2008; EMVA 1288) BEFORE the inter-frame shift and subtraction --
+same K/sigma_read draw for both captures (one sensor, one gain setting),
+two independent noise realizations. This is what actually limits
+differenced-frame SNR at realistic LED/daylight ratios (sqrt(2) x daylight
+shot noise against an LED-only signal); noise-after-subtraction was
+unrealistically clean and collapsed real-rig pose accuracy in simulation.
+The downstream (6) sensor-noise step's own coin still always draws for
+differencing samples (rng-stream consistency), but its body is skipped
+(local `diff_noised` flag, not a config key) since the noise already
+happened per-frame inside branch (5) -- applying it twice would double it.
+differencing_ambient/differencing_illum_peak's ranges were widened/shifted
+to the daylight-pedestal regime; differencing_illum_floor/_sigma_frac/
+_shift_px keep their rev-2 meaning (the LED lobe's own shape, and the
+inter-frame ego-motion budget) unchanged. All ranges are PROVISIONAL,
+pending measured lit/unlit histograms from tasks #26/#31.
 """
 import json
 from pathlib import Path
@@ -685,7 +712,10 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None, board_mask=Non
     # exactly as the brief specifies; the ambient/illum draws own exposure
     # for that sample). `dark` carries the exposure verdict into the
     # grey-out step right below, whichever branch (or neither) set it.
+    # `diff_noised` tells the downstream sensor-noise step (6) whether this
+    # sample already got its noise per-frame, inside this branch (rev-3).
     dark = False
+    diff_noised = False
     if rng.random() < ph["differencing_p"]:
         ambient = rng.uniform(*ph["differencing_ambient"])
         peak = rng.uniform(*ph["differencing_illum_peak"])
@@ -694,9 +724,36 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None, board_mask=Non
         mag = rng.uniform(*ph["differencing_shift_px"])
         ang = rng.uniform(0, 2 * np.pi)
         ys, xs = abs_grid()
-        illum = floor + (peak - floor) * np.exp(-0.5 * ((xs - cxb) ** 2 + (ys - cyb) ** 2) / sigma ** 2)
-        i_lit = work * illum[..., None].astype(np.float32)
-        i_unlit = work * ambient
+        # rev-3 (Kaelin's 940nm rig photometry, 2026-07-28): the real pair is
+        # (daylight alone) vs (daylight + a modest active LED) -- a LARGE
+        # shared pedestal (ambient) with a SMALL additive LED increment
+        # (illum_lobe) on top of it for the lit frame, not two independently
+        # -scaled frames. I_unlit = ambient alone; I_lit = ambient +
+        # illum_lobe. floor/sigma keep their rev-2 meaning (the lobe's own
+        # far-field/near-field shape), only what they're added TO changed.
+        illum_lobe = floor + (peak - floor) * np.exp(-0.5 * ((xs - cxb) ** 2 + (ys - cyb) ** 2) / sigma ** 2)
+        # per-frame saturation (real sensor wells) BEFORE noise/subtraction --
+        # a saturated lit region produces physically-correct contrast-
+        # inverted residue after subtraction, not an unclipped workspace value.
+        i_lit = np.clip(work * (ambient + illum_lobe)[..., None].astype(np.float32), 0, 255)
+        i_unlit = np.clip(work * ambient, 0, 255)
+
+        # per-frame Poissonian-Gaussian sensor noise (Foi et al. 2008 IEEE
+        # TIP; EMVA 1288), applied to EACH captured frame independently --
+        # K/sigma_read drawn ONCE (same sensor, same gain, both captures),
+        # two independent noise realizations. This is what actually limits
+        # differenced-frame SNR at realistic LED/daylight ratios (sqrt(2) x
+        # daylight shot noise against an LED-only signal) -- noise applied
+        # only after subtraction, at the (much smaller) residual's own rate,
+        # was unrealistically clean and collapsed real-rig pose accuracy.
+        K = rng.uniform(*ph["sensor_noise_electrons_per_dn"])
+        sigma_read = rng.uniform(*ph["sensor_noise_read_std"])
+        i_lit = (rng.poisson(np.maximum(i_lit, 0.0) * K).astype(np.float32) / K
+                 + rng.normal(0, sigma_read, i_lit.shape).astype(np.float32))
+        i_unlit = (rng.poisson(np.maximum(i_unlit, 0.0) * K).astype(np.float32) / K
+                   + rng.normal(0, sigma_read, i_unlit.shape).astype(np.float32))
+        diff_noised = True
+
         dxs, dys = mag * np.cos(ang), mag * np.sin(ang)
         Mshift = np.array([[1, 0, dxs], [0, 1, dys]], dtype=np.float64)
         i_unlit_shifted = cv2.warpAffine(i_unlit, Mshift, (ph_w, ph_h), flags=cv2.INTER_LINEAR,
@@ -743,7 +800,15 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None, board_mask=Non
     # draw kept functional for A/B -- gauss_noise_p still gates WHETHER
     # noise fires either way; sensor_noise_enabled only picks the formula.
     if rng.random() < ph["gauss_noise_p"]:
-        if ph["sensor_noise_enabled"]:
+        if diff_noised:
+            # rev-3: differencing already applied per-frame sensor noise to
+            # BOTH captures above (see branch (5)) -- a second pass here
+            # would double-noise the differenced result. The coin above
+            # still draws unconditionally (stream-consistency, same pattern
+            # as board_mask=None elsewhere in this function); only the body
+            # is skipped.
+            pass
+        elif ph["sensor_noise_enabled"]:
             K = rng.uniform(*ph["sensor_noise_electrons_per_dn"])
             sigma_read = rng.uniform(*ph["sensor_noise_read_std"])
             rate = np.maximum(work, 0.0) * K  # guard: rng.poisson rejects lam<0; lam=0 is legal

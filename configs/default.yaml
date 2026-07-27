@@ -95,8 +95,8 @@ synth:
     ink_contrast_p: 0.3   # rev-2 aug pack (task #29): NIR ink-contrast jitter -- carbon-black ink/toner absorbs NIR strongly, many dye inks are comparatively NIR-transparent (Vis-NIR ink discrimination forensics, e.g. Forensic Science International 254 (2015))
     ink_contrast_scale: [1.0, 1.6]
     differencing_p: 0.5   # rev-2 aug pack (task #29, Kaelin's design): flash/no-flash differencing pair (Petschnigg et al. SIGGRAPH 2004; Eisemann & Durand SIGGRAPH 2004); mutually exclusive with brightness_p above (see dcc/synth.py)
-    differencing_ambient: [0.02, 0.15]
-    differencing_illum_peak: [0.7, 1.3]
+    differencing_ambient: [0.05, 0.95]   # rev-3 (task #31, Kaelin's 940nm rig photometry, 2026-07-28): daylight pedestal, night through midday -- PROVISIONAL, pending measured lit/unlit histograms from tasks #26/#31
+    differencing_illum_peak: [0.15, 0.9]   # rev-3: LED increment relative to scene reflectance, ON TOP OF the ambient pedestal (see dcc/synth.py) -- low ratios against high ambient are the deliberately-hard daytime cases -- PROVISIONAL, same status as differencing_ambient above
     differencing_illum_floor: [0.05, 0.3]
     differencing_illum_sigma_frac: [0.25, 0.45]   # illumination-lobe spread, as a fraction of min(w2, h2) -- not pinned by the brief
     differencing_shift_px: [0.2, 3.0]

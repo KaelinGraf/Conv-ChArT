@@ -1,10 +1,11 @@
 """Introspection & visualisation CLI for the Conv-ChArT detector (conference
-demo). Six presentation-grade panels rendered from a single forward pass over
-one SynthVal sample or a raw image: pipeline end-to-end, 3D heatmap
-landscape, bottleneck-attention maps, decoder skip gates, an
-effective-receptive-field probe, and encoder feature maps. No --ckpt -> an
-UNTRAINED DetectorNet, flagged on every figure title. Argparse runs before
-any heavy import so --help never needs torch/dcc/matplotlib.
+demo). Seven presentation-grade panels rendered from a single forward pass
+over one SynthVal sample or a raw image: pipeline end-to-end, 3D heatmap
+landscape, bottleneck-attention maps, decoder skip gates, a gate
+selectivity probe (skip/conditioning/gated/suppressed against a GT
+board-region mask), an effective-receptive-field probe, and encoder feature
+maps. No --ckpt -> an UNTRAINED DetectorNet, flagged on every figure title.
+Argparse runs before any heavy import so --help never needs torch/dcc/matplotlib.
 """
 import argparse
 import sys
@@ -12,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PANELS_ALL = ["pipeline", "heatmap3d", "attention", "gates", "erf", "features"]
+PANELS_ALL = ["pipeline", "heatmap3d", "attention", "gates", "gateprobe", "gateflow", "gateablation", "erf", "features"]
 
 
 def _parse_xy(s):
@@ -64,19 +65,22 @@ def _suptitle(ckpt_path, tag, trained):
 
 
 def _sample(cfg, args):
-    """(image uint8 (H,W), tag) -- tag is filename-safe, used in every out path."""
+    """(image uint8 (H,W), tag, record|None) -- tag is filename-safe, used in
+    every out path; record is generate_sample's own dict (GT "corners" etc),
+    None for a raw --image file. Every panel but gateprobe ignores the 3rd
+    value; gateprobe's board-region mask needs it."""
     import cv2
     if args.image:
         img = cv2.imread(args.image, cv2.IMREAD_GRAYSCALE)
         if img is None:
             raise FileNotFoundError(f"could not read image: {args.image}")
         w, h = cfg["input_size"]
-        return cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA), Path(args.image).stem
+        return cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA), Path(args.image).stem, None
     from dcc.dataset import SynthVal
     idx = args.index if args.index is not None else 0
     ds = SynthVal(cfg, cfg["synth"]["val_size"], cfg["synth"]["val_seed"])
-    img, _ = ds[idx]
-    return img, f"val{idx}"
+    img, record = ds[idx]
+    return img, f"val{idx}", record
 
 
 def _peak_or_query(args, prob_hm_2d):
@@ -328,6 +332,293 @@ def panel_gates(model, x, image, args, out, tag, suptitle, dpi, show):
     _finish(fig, out / f"gates_{tag}.png", dpi, show, rect=[0, 0.05, 1, 1])
 
 
+def _swap_donor_gate_args(model, cfg, args, device):
+    """A second, unrelated frame's gate_args -- the conditioning-ablation
+    swap test (gate-actor Task C variant 4): wrong-image `g` (conditioning),
+    right-image `skip`, is the cleanest probe of whether alpha actually
+    depends on its conditioning signal. Always drawn from SynthVal (bit-
+    identical, board present with high probability) regardless of whether
+    the main sample came from --image, so the swap is available even for a
+    raw-file invocation. Donor index is offset from --index (or 0) by a
+    third of val_size so it's reliably a different scene, not adjacent."""
+    import torch
+    from dcc.dataset import SynthVal
+    val_size = cfg["synth"]["val_size"]
+    donor_idx = (0 if args.index is None else args.index + val_size // 3) % val_size
+    ds = SynthVal(cfg, val_size, cfg["synth"]["val_seed"])
+    donor_img, _ = ds[donor_idx]
+    donor_x = torch.from_numpy(donor_img).float().div(255.0).unsqueeze(0).unsqueeze(0).to(device)
+    _, _, _, _, donor_gate_args = _forward_hooked(model, donor_x)
+    return donor_gate_args
+
+
+def panel_gate_probe(model, x, image, out, tag, suptitle, dpi, show, corners=None, donor_gate_args=None):
+    """Selectivity probe (Kaelin 2026-07-28): does an AttnGate's alpha
+    actually vary spatially with content, or does it just attenuate the
+    whole skip uniformly? panel_gates only shows alpha itself; this adds the
+    skip (s3) and conditioning signal (z) alpha is computed FROM, the gated
+    skip (s3*alpha) and what got thrown away (s3*(1-alpha)), and an alpha
+    histogram against the pass-through init value (sigmoid(3)=0.9526). skip
+    and z are aggregated over channels two ways -- channel-mean(abs) AND
+    channel-max(abs), since they tell different stories (mean can hide a few
+    strongly-selective channels; max can hide that most channels are flat).
+    `corners` (GT {"x","y"} points, generated frames only) additionally
+    builds a convex-hull board-region mask and reports mean alpha inside vs
+    outside it -- printed, and marked on the histogram -- the quantitative
+    read on whether alpha tracks the board or is diffuse. `donor_gate_args`
+    (see _swap_donor_gate_args) adds a 5th column: baseline alpha vs
+    swapped-context alpha side by side, plus their |diff| map and
+    mean-abs-change/Pearson-r -- the single most direct image for "does the
+    gate use conditioning, or only the skip.\""""
+    import numpy as np
+    import cv2
+    import torch
+    import matplotlib.pyplot as plt
+
+    INIT_ALPHA = 0.9526   # sigmoid(3.0), AttnGate's pass-through init (dcc/model.py's AttnGate docstring)
+    H, W = image.shape
+    _, _, _, _, gate_args = _forward_hooked(model, x)
+    names = [n for n in ("gate3", "gate4") if n in gate_args]
+    if not names:
+        print("SKIP gate_probe: neither gate3 nor gate4 found")
+        return
+
+    def chan_reduce(feat):
+        """(channel-mean(abs), channel-max(abs)) 2D maps from a (1,C,h,w) tensor."""
+        f = feat[0].abs()
+        return f.mean(dim=0).cpu().numpy(), f.max(dim=0).values.cpu().numpy()
+
+    def up(m):
+        return cv2.resize(m, (W, H), interpolation=cv2.INTER_LINEAR)
+
+    ncols = 5 if donor_gate_args else 4
+    for n in names:
+        a, kw = gate_args[n]
+        skip, g = a[0], a[1]
+        with torch.no_grad():
+            alpha = getattr(model, n).alpha(*a, **kw)[0, 0]   # (h4, w4) -- skip's own res, pre display-upsample
+        gated, suppressed = skip * alpha, skip * (1 - alpha)
+        alpha_np = alpha.cpu().numpy()
+        alpha_up = up(alpha_np)
+
+        fig, axes = plt.subplots(3, ncols, figsize=(5 * ncols, 15), squeeze=False)
+        _show_plain(axes[0, 0], image, "input")
+        im = axes[0, 1].imshow(alpha_up, cmap="viridis", vmin=0, vmax=1)
+        _no_ticks(axes[0, 1], f"{n}.alpha (fixed 0-1 scale)")
+        fig.colorbar(im, ax=axes[0, 1], fraction=0.046, pad=0.04)
+        _show_overlay(axes[0, 2], image, alpha_up, f"{n}.alpha over input", cmap="viridis", vmin=0, vmax=1)
+
+        stats = f"mean={alpha_np.mean():.3f} std={alpha_np.std():.3f}"
+        axes[0, 3].hist(alpha_np.ravel(), bins=50, range=(0, 1), color="steelblue")
+        axes[0, 3].axvline(INIT_ALPHA, color="red", ls="--", lw=1.5, label=f"init={INIT_ALPHA}")
+        if corners:
+            pts = np.array([[c["x"], c["y"]] for c in corners], dtype=np.float32)
+            mask = np.zeros((H, W), dtype=np.uint8)
+            cv2.fillConvexPoly(mask, cv2.convexHull(pts).astype(np.int32), 1)
+            mb = mask.astype(bool)
+            m_in, m_out = float(alpha_up[mb].mean()), float(alpha_up[~mb].mean())
+            ratio = m_in / m_out if m_out > 1e-9 else float("nan")
+            axes[0, 3].axvline(m_in, color="lime", lw=1.5, label=f"inside board={m_in:.3f}")
+            axes[0, 3].axvline(m_out, color="orange", lw=1.5, label=f"outside board={m_out:.3f}")
+            stats += f" | inside={m_in:.3f} outside={m_out:.3f} ratio={ratio:.2f}"
+            print(f"  {n} board-region alpha: inside={m_in:.4f} outside={m_out:.4f} ratio={ratio:.3f}")
+        axes[0, 3].legend(fontsize=6, loc="upper left")
+        axes[0, 3].set_title(f"{n}.alpha histogram\n{stats}", fontsize=8)
+
+        if donor_gate_args and n in donor_gate_args:
+            (_, donor_g), _ = donor_gate_args[n]
+            with torch.no_grad():
+                alpha_swap = getattr(model, n).alpha(skip, donor_g)[0, 0].cpu().numpy()
+            diff = np.abs(alpha_np - alpha_swap)
+            r = float(np.corrcoef(alpha_np.ravel(), alpha_swap.ravel())[0, 1])
+            axes[0, 4].imshow(up(alpha_swap), cmap="viridis", vmin=0, vmax=1)
+            _no_ticks(axes[0, 4], f"{n}.alpha SWAPPED-context g\n(right skip, wrong-frame conditioning)")
+            axes[1, 4].imshow(up(diff), cmap="magma", vmin=0, vmax=1)
+            _no_ticks(axes[1, 4], f"|alpha - alpha_swap|\nmean_abs_change={diff.mean():.3f}  pearson_r={r:.3f}")
+            axes[2, 4].axis("off")
+            print(f"  {n} conditioning swap: mean_abs_change={diff.mean():.4f} pearson_r={r:.4f}")
+
+        for col, (label, feat) in enumerate((("skip s3", skip), ("cond z", g),
+                                              ("gated s3*alpha", gated), ("suppressed s3*(1-alpha)", suppressed))):
+            mean_map, max_map = chan_reduce(feat)
+            axes[1, col].imshow(up(mean_map), cmap="viridis")
+            _no_ticks(axes[1, col], f"{label} | channel-mean(abs)")
+            axes[2, col].imshow(up(max_map), cmap="viridis")
+            _no_ticks(axes[2, col], f"{label} | channel-max(abs)")
+
+        fig.suptitle(f"gate_probe {n} | {suptitle}")
+        _finish(fig, out / f"gateprobe_{n}_{tag}.png", dpi, show)
+
+
+def panel_gate_flow(model, x, image, out, tag, suptitle, dpi, show, corners=None):
+    """Minimal, explicitly-labelled view of WHAT THE DECODER ACTUALLY EATS
+    (Kaelin 2026-07-28, asked for after panel_gate_probe proved too busy):
+    exactly the four maps on the path into d3's convolution, plus the alpha
+    histogram. Deliberately NOT the full diagnostic -- panel_gate_probe
+    keeps the suppressed-content/channel-max/swap columns for when the
+    question is "is the gate selective"; this one answers "what is
+    concatenated, and in what proportion".
+
+    The concat site is dcc/model.py:248 -- `d3(cat([up2(z), gate3(s3, z)]))`
+    -- so the panels are, left to right, the network input; the raw encoder
+    skip s3 BEFORE gating; the upsampled attention/bottleneck output up2(z),
+    which is the other half of the concat; and the GATED skip s3*alpha,
+    which is what physically enters the concat. Every feature map is
+    channel-mean(|.|) over its channels (one reduction, stated on the axis,
+    rather than probe's two) and shown at its own native resolution with the
+    shape in the title, so the H/4-vs-H/8 asymmetry is visible rather than
+    hidden by a common resize."""
+    import numpy as np
+    import cv2
+    import torch
+    import matplotlib.pyplot as plt
+
+    INIT_ALPHA = 0.9526   # sigmoid(3.0), AttnGate's pass-through init
+    H, W = image.shape
+    _, _, _, _, gate_args = _forward_hooked(model, x)
+    names = [n for n in ("gate3", "gate4") if n in gate_args]
+    if not names:
+        print("SKIP gate_flow: neither gate3 nor gate4 found")
+        return
+
+    def cmean(feat):
+        return feat[0].abs().mean(dim=0).cpu().numpy()
+
+    for n in names:
+        a, kw = gate_args[n]
+        skip, g = a[0], a[1]
+        with torch.no_grad():
+            alpha = getattr(model, n).alpha(*a, **kw)[0, 0]
+        gated = skip * alpha
+        alpha_np = alpha.cpu().numpy()
+        # The ACTUAL tensor d3 consumes: cat([up2(z), s3*alpha], dim=1) -- dcc/model.py:249.
+        # Panels 2-4 each show one ADDITIVE contribution; this is the fused result, and the
+        # channel-mean over it is weighted by the 2:1 channel split (256 from z vs 128 from
+        # the gated skip), which is stated in the title so the z-dominance is read as
+        # arithmetic rather than as a finding.
+        from dcc.model import up2 as _up2
+        concat = torch.cat([_up2(g), gated], 1)
+        sk, gz, gt, cc = cmean(skip), cmean(g), cmean(gated), cmean(concat)
+        sh = lambda t: f"{tuple(t.shape[1:])[0]}ch {tuple(t.shape[2:])[0]}x{tuple(t.shape[3:])[0]}"
+
+        fig, axes = plt.subplots(1, 6, figsize=(31, 5.6), squeeze=False)
+        _show_plain(axes[0, 0], image, f"1. INPUT\ngrayscale {H}x{W}")
+        for ax, m, title in (
+            (axes[0, 1], sk, f"2. ENCODER SKIP  s3  (pre-gate)\n{sh(skip)} @ H/4 -- channel-mean|.|"),
+            (axes[0, 2], gz, f"3. ATTENTION OUT  z  (post-transformer)\n{sh(g)} @ H/8 -- the OTHER half of the concat"),
+            (axes[0, 3], gt, f"4. GATED SKIP  s3 x alpha\n{sh(gated)} @ H/4 -- the gate's additive contribution"),
+            (axes[0, 4], cc, f"5. CONCATENATED  cat[up2(z), s3*alpha]\n{sh(concat)} @ H/4 -- what d3 CONVOLVES (256z:128skip)"),
+        ):
+            im = ax.imshow(m, cmap="magma")
+            _no_ticks(ax, title)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        stats = f"mean={alpha_np.mean():.3f}  std={alpha_np.std():.3f}"
+        axes[0, 5].hist(alpha_np.ravel(), bins=50, range=(0, 1), color="steelblue")
+        axes[0, 5].axvline(INIT_ALPHA, color="red", ls="--", lw=1.5, label=f"pass-through init = {INIT_ALPHA}")
+        if corners:
+            pts = np.array([[c["x"], c["y"]] for c in corners], dtype=np.float32)
+            mask = np.zeros((H, W), dtype=np.uint8)
+            cv2.fillConvexPoly(mask, cv2.convexHull(pts).astype(np.int32), 1)
+            au = cv2.resize(alpha_np, (W, H), interpolation=cv2.INTER_LINEAR)
+            mb = mask.astype(bool)
+            m_in, m_out = float(au[mb].mean()), float(au[~mb].mean())
+            axes[0, 5].axvline(m_in, color="lime", lw=1.5, label=f"mean ON board = {m_in:.3f}")
+            axes[0, 5].axvline(m_out, color="orange", lw=1.5, label=f"mean OFF board = {m_out:.3f}")
+            stats += f"  |  on-board {m_in:.3f} vs off-board {m_out:.3f}"
+        axes[0, 5].set_xlabel("alpha  (0 = skip fully suppressed, 1 = passed through)")
+        axes[0, 5].set_ylabel("pixel count")
+        axes[0, 5].legend(fontsize=7, loc="upper left")
+        axes[0, 5].set_title(f"6. GATE WEIGHT alpha -- distribution\n{stats}", fontsize=9)
+
+        fig.suptitle(f"{suptitle}  --  {n} flow into d3:  d3( concat[ up2(z) , s3*alpha ] )", fontsize=12)
+        _finish(fig, out / f"gateflow_{n}_{tag}.png", dpi, show)
+
+
+def panel_gate_ablation(model, x, image, out, tag, suptitle, dpi, show, corners=None, donor_gate_args=None):
+    """Conditioning-ablation (Kaelin/team-lead Task C, 2026-07-28): does
+    alpha actually depend on its conditioning signal g, or would skip s3
+    alone produce the same mask -- i.e. has the gate degenerated into a
+    skip-driven saliency filter that ignores global board context? Holds
+    skip FIXED and degrades g three ways: spatial-mean (kills spatial/global
+    structure, keeps per-channel magnitude), zeroed (W_g contributes only
+    its bias), swapped (a DIFFERENT frame's own g entirely -- the cleanest
+    single test; needs donor_gate_args, see _swap_donor_gate_args). Also
+    splits gate.wx(skip) vs gate.wg(g) BEFORE they're summed+ReLU'd: if
+    ||wg(g)|| << ||wx(skip)|| the conditioning is numerically negligible
+    regardless of what the alpha ablations show -- a one-number answer to
+    the same question. Row 0 is each variant's alpha (fixed 0-1 scale,
+    board in/out/ratio in the title); row 1 is |baseline - variant| against
+    baseline (magnitude balance as text under baseline itself)."""
+    import numpy as np
+    import cv2
+    import torch
+    import matplotlib.pyplot as plt
+
+    H, W = image.shape
+    _, _, _, _, gate_args = _forward_hooked(model, x)
+    names = [n for n in ("gate3", "gate4") if n in gate_args]
+    if not names:
+        print("SKIP gate_ablation: neither gate3 nor gate4 found")
+        return
+
+    def up(m):
+        return cv2.resize(m, (W, H), interpolation=cv2.INTER_LINEAR)
+
+    def board_stats(alpha_up):
+        if not corners:
+            return None, None, None
+        pts = np.array([[c["x"], c["y"]] for c in corners], dtype=np.float32)
+        mask = np.zeros((H, W), dtype=np.uint8)
+        cv2.fillConvexPoly(mask, cv2.convexHull(pts).astype(np.int32), 1)
+        mb = mask.astype(bool)
+        m_in, m_out = float(alpha_up[mb].mean()), float(alpha_up[~mb].mean())
+        return m_in, m_out, (m_in / m_out if m_out > 1e-9 else float("nan"))
+
+    for n in names:
+        gate = getattr(model, n)
+        a, kw = gate_args[n]
+        skip, g = a[0], a[1]
+        variants = {"baseline": g, "spatial-mean g": g.mean(dim=(2, 3), keepdim=True).expand_as(g),
+                    "zeroed g": torch.zeros_like(g)}
+        if donor_gate_args and n in donor_gate_args:
+            (_, donor_g), _ = donor_gate_args[n]
+            variants["swapped g"] = donor_g
+
+        with torch.no_grad():
+            alphas = {name: gate.alpha(skip, gv)[0, 0].cpu().numpy() for name, gv in variants.items()}
+            wx, wg = gate.wx(skip), gate.wg(g)
+        wx_rms, wg_rms = float(wx.pow(2).mean().sqrt()), float(wg.pow(2).mean().sqrt())
+        wx_l2, wg_l2 = float(wx.norm()), float(wg.norm())
+        print(f"  {n} magnitude balance: ||wx(skip)||_rms={wx_rms:.4f} ||wg(g)||_rms={wg_rms:.4f} "
+              f"(wg/wx ratio={wg_rms / wx_rms:.3f}) | L2 wx={wx_l2:.2f} wg={wg_l2:.2f}")
+        base_in, base_out, base_ratio = board_stats(up(alphas["baseline"]))
+        if base_in is not None:
+            print(f"  {n} baseline: inside={base_in:.4f} outside={base_out:.4f} ratio={base_ratio:.3f}")
+
+        fig, axes = plt.subplots(2, len(variants), figsize=(5 * len(variants), 10), squeeze=False)
+        for col, (name, av) in enumerate(alphas.items()):
+            av_up = up(av)
+            m_in, m_out, ratio = board_stats(av_up)
+            title = name if m_in is None else f"{name}\nin={m_in:.3f} out={m_out:.3f} ratio={ratio:.2f}"
+            axes[0, col].imshow(av_up, cmap="viridis", vmin=0, vmax=1)
+            _no_ticks(axes[0, col], title)
+            if name == "baseline":
+                axes[1, col].axis("off")
+                axes[1, col].text(0.05, 0.5, f"wx(skip) rms={wx_rms:.3f}\nwg(g) rms={wg_rms:.3f}\n"
+                                   f"wg/wx ratio={wg_rms / wx_rms:.3f}", fontsize=10, va="center")
+            else:
+                diff = np.abs(alphas["baseline"] - av)
+                r = float(np.corrcoef(alphas["baseline"].ravel(), av.ravel())[0, 1])
+                axes[1, col].imshow(up(diff), cmap="magma", vmin=0, vmax=1)
+                _no_ticks(axes[1, col], f"|baseline - {name}|\nmean|d|={diff.mean():.3f} r={r:.3f}")
+                print(f"  {n} {name}: mean_abs_change={diff.mean():.4f} pearson_r={r:.4f} "
+                      f"inside={m_in:.4f} outside={m_out:.4f} ratio={ratio:.3f}")
+
+        fig.suptitle(f"gate_ablation {n} (conditioning degraded, skip fixed) | {suptitle}")
+        _finish(fig, out / f"gateablation_{n}_{tag}.png", dpi, show)
+
+
 def _erf_grad(m, x, args):
     """Unit-gradient effective-receptive-field probe: backward from one
     class-head logit (the strongest ID, or --query-xy's cell) to the input.
@@ -410,7 +701,7 @@ def main():
 
     cfg = load_config(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    image, tag = _sample(cfg, args)
+    image, tag, record = _sample(cfg, args)
     W, H = cfg["input_size"]
     model, trained = _build_module(DetectorNet, args.ckpt, device, H, W, **detector_kwargs(cfg))
     x = torch.from_numpy(image).float().div(255.0).unsqueeze(0).unsqueeze(0).to(device)
@@ -426,6 +717,18 @@ def main():
         panel_attention(model, x, image, args, out, tag, suptitle, args.dpi, args.show)
     if "gates" in requested:
         panel_gates(model, x, image, args, out, tag, suptitle, args.dpi, args.show)
+    donor_gate_args = None
+    if "gateprobe" in requested or "gateablation" in requested:
+        donor_gate_args = _swap_donor_gate_args(model, cfg, args, device)
+    if "gateprobe" in requested:
+        panel_gate_probe(model, x, image, out, tag, suptitle, args.dpi, args.show,
+                          corners=(record.get("corners") if record else None), donor_gate_args=donor_gate_args)
+    if "gateflow" in requested:
+        panel_gate_flow(model, x, image, out, tag, suptitle, args.dpi, args.show,
+                         corners=(record.get("corners") if record else None))
+    if "gateablation" in requested:
+        panel_gate_ablation(model, x, image, out, tag, suptitle, args.dpi, args.show,
+                             corners=(record.get("corners") if record else None), donor_gate_args=donor_gate_args)
     if "erf" in requested:
         model_b, suptitle_b = None, None
         if args.ckpt_b:

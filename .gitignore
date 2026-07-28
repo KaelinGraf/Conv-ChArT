@@ -14,3 +14,25 @@ ablations.md
 paper/
 audit640/
 eval_pose*/
+
+# comparison/baseline arm -- paper-support only, never part of the public tree.
+# tools/charuconet.py copies dcModel byte-for-byte from JunkyByte/deepcharuco
+# (MIT, Copyright (c) 2023 JunkyByte); shipping it would put third-party
+# licensed code in this repo's release. The rest is our own work but exists
+# solely to score baselines for the paper, so it ships with the paper, not
+# with the method. The vendored upstream lives outside this repo entirely
+# (/home/kaelin/p4p/external/deepcharuco).
+tools/charuconet.py
+tools/train_charuconet.py
+tools/eval_classical.py
+tools/factor_sweep.py
+tools/plot_figures.py
+tools/inversion_audit.py
+tools/polarity_invariance.py
+tools/cross_eval.py
+tests/test_eval_classical.py
+tests/test_factor_sweep.py
+tests/test_plot_figures.py
+tests/test_cross_eval.py
+eval_classical/
+factor_sweep*/

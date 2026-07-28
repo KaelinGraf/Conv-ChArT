@@ -307,8 +307,14 @@ def _diag_log_fields(captured):
     for gname in ("gate3", "gate4"):
         a = captured.get(gname)
         if a is not None:
+            a = a.float()
             fields[f"{gname}_alpha_mean"] = float(a.mean())
             fields[f"{gname}_alpha_min"] = float(a.min())
+            fields[f"{gname}_alpha_max"] = float(a.max())
+            fields[f"{gname}_alpha_std"] = float(a.std())
+            fields[f"{gname}_alpha_p10"] = float(a.quantile(0.1))
+            fields[f"{gname}_alpha_p50"] = float(a.quantile(0.5))
+            fields[f"{gname}_alpha_p90"] = float(a.quantile(0.9))
     for key in sorted(k for k in captured if k.startswith("block")):
         p = captured[key].float().clamp_min(1e-12)
         fields[f"{key}_attn_entropy"] = float(-(p * p.log()).sum(-1).mean())
@@ -568,6 +574,10 @@ def main():
             _wandb_log_preview(wandb_run, preview_dir, step, "val")
             last_val = result
             val_time += time.time() - v0
+
+        if step % tcfg.get("ckpt_rolling_every", 1000) == 0:
+            save_ckpt(run_dir / "ckpt_latest.pt", step, resume_count, model, ema, optim, cfg,
+                      last_val, retargeted_from=retargeted_from)
 
         if step % tcfg["full_val_every"] == 0 or step == total_steps:
             v0 = time.time()

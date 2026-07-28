@@ -25,19 +25,20 @@
 
   <rect x="0" y="0" width="1520" height="900" fill="#ffffff"/>
   <text x="760" y="30" text-anchor="middle" font-size="17" fill="#222222" font-weight="bold">Conv-ChArT detector — hybrid convolutional–transformer architecture</text>
+  <text x="760" y="46" text-anchor="middle" font-size="11" fill="#666666" font-style="italic">attend_div=8 · 640×480 — the trained/ablated configuration (native attend_div=16, 1600×1200 scaling variant: inset, upper right)</text>
 
   <!-- input -->
   <rect x="90" y="42" width="200" height="24" rx="4" fill="#f2f2f2" stroke="#999999"/>
-  <text x="190" y="58" text-anchor="middle" font-size="11.5" fill="#333333">input · grayscale 1 × 1600 × 1200</text>
-  <line x1="190" y1="66" x2="190" y2="78" stroke="#555555" stroke-width="1.6" marker-end="url(#aGray)"/>
+  <text x="190" y="58" text-anchor="middle" font-size="11.5" fill="#333333">input · grayscale 1 × 640 × 480</text>
+  <line x1="190" y1="66" x2="190" y2="80" stroke="#555555" stroke-width="1.6" marker-end="url(#aGray)"/>
 
   <!-- ================= encoder column ================= -->
+  <!-- attend_div=8: e4 is the deepest stage (dilated r=2,4 pair lives here); no e5 -->
   <g stroke="#4C72B0" fill="#dbe9f6" stroke-width="1.6">
     <rect x="90" y="80" width="200" height="58" rx="6"/>
     <rect x="90" y="178" width="200" height="58" rx="6"/>
     <rect x="90" y="276" width="200" height="58" rx="6"/>
     <rect x="90" y="374" width="200" height="58" rx="6"/>
-    <rect x="90" y="505" width="200" height="58" rx="6" stroke-dasharray="6 3"/>
   </g>
   <g font-size="12.5" fill="#1d3d63" text-anchor="middle">
     <text x="190" y="103" font-weight="bold">e1 · [conv3×3 + BN + ReLU] ×2</text>
@@ -46,117 +47,103 @@
     <text x="190" y="219" font-size="11" fill="#44618a">H/2 · 64 ch</text>
     <text x="190" y="299" font-weight="bold">e3 · [conv3×3 + BN + ReLU] ×2</text>
     <text x="190" y="317" font-size="11" fill="#44618a">H/4 · 128 ch</text>
-    <text x="190" y="397" font-weight="bold">e4 · [conv3×3 + BN + ReLU] ×2</text>
-    <text x="190" y="415" font-size="11" fill="#44618a">H/8 · 256 ch</text>
-    <text x="190" y="528" font-weight="bold">e5 · conv×2 + dilated conv×2</text>
-    <text x="190" y="546" font-size="11" fill="#44618a">H/16 · 256 ch (r = 2, 4 on the ×2)</text>
+    <text x="190" y="397" font-weight="bold">e4 · conv×2 + dilated conv×2</text>
+    <text x="190" y="415" font-size="11" fill="#44618a">H/8 · 256 ch (r = 2, 4 on the ×2)</text>
   </g>
   <!-- encoder downsampling arrows -->
   <g stroke="#555555" stroke-width="1.6">
-    <line x1="190" y1="138" x2="190" y2="176" marker-end="url(#aGray)"/>
-    <line x1="190" y1="236" x2="190" y2="274" marker-end="url(#aGray)"/>
-    <line x1="190" y1="334" x2="190" y2="372" marker-end="url(#aGray)"/>
-    <line x1="190" y1="432" x2="190" y2="503" marker-end="url(#aGray)"/>
+    <line x1="190" y1="138" x2="190" y2="178" marker-end="url(#aGray)"/>
+    <line x1="190" y1="236" x2="190" y2="276" marker-end="url(#aGray)"/>
+    <line x1="190" y1="334" x2="190" y2="374" marker-end="url(#aGray)"/>
   </g>
   <g font-size="10.5" fill="#666666">
     <text x="198" y="161">maxpool ↓2</text>
     <text x="198" y="259">maxpool ↓2</text>
     <text x="198" y="357">maxpool ↓2</text>
-    <text x="198" y="472">maxpool ↓2</text>
   </g>
 
   <!-- ================= bottleneck ================= -->
-  <!-- reshape -> tokens, forks at (404,513): straight into block 1's LN, and up/over as its
-       identity bypass. The fork dot marks the split; nothing is computed here. -->
-  <polyline points="290,534 360,534 360,513 404,513" fill="none" stroke="#7B5EA7" stroke-width="1.8" marker-end="url(#aPurple)"/>
-  <text x="325" y="524" text-anchor="middle" font-size="10.5" fill="#7B5EA7">reshape → tokens</text>
-  <circle cx="404" cy="513" r="2.5" fill="#7B5EA7"/>
+  <!-- reshape -> tokens, forks at (396,403), on the input line BEFORE the LN/MHSA box: straight into block 1's LN, and up/over as its
+       identity bypass. The fork dot marks the split; nothing is computed here. e4 sits at the
+       same H/8 row (centre y=403) so this is a plain horizontal run, no jog needed. -->
+  <line x1="290" y1="403" x2="404" y2="403" stroke="#7B5EA7" stroke-width="1.8" marker-end="url(#aPurple)"/>
+  <text x="340" y="393" text-anchor="middle" font-size="9" fill="#7B5EA7">reshape → tokens</text>
+  <circle cx="396" cy="403" r="2.5" fill="#7B5EA7"/>
 
-  <rect x="390" y="458" width="400" height="164" rx="8" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.8"/>
-  <text x="590" y="476" text-anchor="middle" font-size="12.5" fill="#4b3573" font-weight="bold">transformer block ×2 (pre-norm, sequential)</text>
-  <text x="785" y="468" text-anchor="end" font-size="8" fill="#8a76ad" font-style="italic">- - - = identity bypass</text>
+  <rect x="390" y="348" width="400" height="164" rx="8" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.8"/>
+  <text x="590" y="366" text-anchor="middle" font-size="12.5" fill="#4b3573" font-weight="bold">transformer block ×2 (pre-norm, sequential)</text>
+  <text x="785" y="358" text-anchor="end" font-size="8" fill="#8a76ad" font-style="italic">- - - = identity bypass</text>
 
   <!-- sub-layer 1: x = x + Wo(MHSA(LN(x))), RoPE on Q,K only -->
-  <polyline points="404,513 404,478 738,478 738,503" fill="none" stroke="#7B5EA7" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#aPurple)"/>
-  <rect x="404" y="494" width="310" height="38" rx="4" fill="#ffffff" stroke="#a08cc4" stroke-width="1"/>
-  <text x="559" y="509" text-anchor="middle" font-size="10.5" fill="#4b3573" font-weight="bold">LN → MHSA · 8 heads → Wₒ</text>
-  <text x="559" y="524" text-anchor="middle" font-size="9" fill="#6a5a8e">2D axial RoPE on Q, K only (not V)</text>
-  <line x1="714" y1="513" x2="728" y2="513" stroke="#4b3573" stroke-width="1.2" marker-end="url(#aPurple)"/>
-  <circle cx="738" cy="513" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
-  <text x="738" y="517.5" text-anchor="middle" font-size="12" fill="#4b3573">+</text>
+  <polyline points="396,403 396,376 738,376 738,393" fill="none" stroke="#7B5EA7" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#aPurple)"/>
+  <rect x="404" y="384" width="310" height="38" rx="4" fill="#ffffff" stroke="#a08cc4" stroke-width="1"/>
+  <text x="559" y="399" text-anchor="middle" font-size="10.5" fill="#4b3573" font-weight="bold">LN → MHSA · 8 heads → Wₒ</text>
+  <text x="559" y="414" text-anchor="middle" font-size="9" fill="#6a5a8e">2D axial RoPE on Q, K only (not V)</text>
+  <line x1="714" y1="403" x2="728" y2="403" stroke="#4b3573" stroke-width="1.2" marker-end="url(#aPurple)"/>
+  <circle cx="738" cy="403" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
+  <text x="738" y="407.5" text-anchor="middle" font-size="12" fill="#4b3573">+</text>
 
   <!-- sub-layer 1 output x1 forks: down into sub-layer 2's LN, and around it (bypass rail) to circle 2 -->
-  <polyline points="738,523 738,540 450,540 450,548" fill="none" stroke="#4b3573" stroke-width="1.4" marker-end="url(#aPurple)"/>
-  <polyline points="748,519 760,519 760,557 738,557" fill="none" stroke="#7B5EA7" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#aPurple)"/>
+  <polyline points="738,413 738,430 450,430 450,438" fill="none" stroke="#4b3573" stroke-width="1.4" marker-end="url(#aPurple)"/>
+  <polyline points="748,403 760,403 760,437 738,437 738,447" fill="none" stroke="#7B5EA7" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#aPurple)"/>
 
   <!-- sub-layer 2: x = x1 + MLP(LN(x1)) -->
-  <rect x="404" y="548" width="310" height="38" rx="4" fill="#ffffff" stroke="#a08cc4" stroke-width="1"/>
-  <text x="559" y="563" text-anchor="middle" font-size="10.5" fill="#4b3573" font-weight="bold">LN → MLP (ratio 4)</text>
-  <text x="559" y="578" text-anchor="middle" font-size="9" fill="#6a5a8e">2-layer, GELU, hidden = 4d</text>
-  <line x1="714" y1="567" x2="728" y2="567" stroke="#4b3573" stroke-width="1.2" marker-end="url(#aPurple)"/>
-  <circle cx="738" cy="567" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
-  <text x="738" y="571.5" text-anchor="middle" font-size="12" fill="#4b3573">+</text>
+  <rect x="404" y="438" width="310" height="38" rx="4" fill="#ffffff" stroke="#a08cc4" stroke-width="1"/>
+  <text x="559" y="453" text-anchor="middle" font-size="10.5" fill="#4b3573" font-weight="bold">LN → MLP (ratio 4)</text>
+  <text x="559" y="468" text-anchor="middle" font-size="9" fill="#6a5a8e">2-layer, GELU, hidden = 4d</text>
+  <line x1="714" y1="457" x2="728" y2="457" stroke="#4b3573" stroke-width="1.2" marker-end="url(#aPurple)"/>
+  <circle cx="738" cy="457" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
+  <text x="738" y="461.5" text-anchor="middle" font-size="12" fill="#4b3573">+</text>
 
-  <text x="590" y="604" text-anchor="middle" font-size="10" fill="#6a5a8e">tokens (native, attend_div=16) = H/16 grid = 100 × 75 = 7 500 · d = 256</text>
+  <text x="590" y="494" text-anchor="middle" font-size="10" fill="#6a5a8e">tokens (trained, attend_div=8) = H/8 grid = 80 × 60 = 4 800 · d = 256</text>
 
   <!-- epilogue LN: applied ONCE after the ×2 loop (self.norm), not part of either block above -->
-  <line x1="748" y1="567" x2="808" y2="567" stroke="#4b3573" stroke-width="1.4" marker-end="url(#aPurple)"/>
-  <rect x="810" y="538" width="56" height="58" rx="6" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.6"/>
-  <text x="838" y="571" text-anchor="middle" font-size="12" fill="#4b3573" font-weight="bold">LN</text>
-  <text x="838" y="611" text-anchor="middle" font-size="8" fill="#8a76ad" font-style="italic">epilogue — once, after ×2</text>
+  <line x1="748" y1="457" x2="810" y2="457" stroke="#4b3573" stroke-width="1.4" marker-end="url(#aPurple)"/>
+  <rect x="810" y="428" width="56" height="58" rx="6" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.6"/>
+  <text x="838" y="461" text-anchor="middle" font-size="12" fill="#4b3573" font-weight="bold">LN</text>
+  <text x="838" y="501" text-anchor="middle" font-size="8" fill="#8a76ad" font-style="italic">epilogue — once, after ×2</text>
 
-  <!-- bottleneck up to decoder d4 -->
-  <polyline points="874,567 900,567 900,403 915,403" fill="none" stroke="#55A868" stroke-width="1.8" marker-end="url(#aGreen)"/>
-  <text x="916" y="485" font-size="10.5" fill="#55A868" transform="rotate(-90 916 485)">bilinear ↑2</text>
+  <!-- z (post-epilogue-LN) forks: up2 into the d3 concat, and a short gating tap g into AG3 (below) -->
+  <polyline points="866,457 900,457 900,305 917,305" fill="none" stroke="#55A868" stroke-width="1.8" marker-end="url(#aGreen)"/>
+  <text x="916" y="381" font-size="10.5" fill="#55A868" transform="rotate(-90 916 381)">bilinear ↑2</text>
 
   <!-- ================= skips, gates, concats ================= -->
-  <!-- concat circles at x=930, row centres y=109/207/305/403 -->
+  <!-- concat circles at x=930, row centres y=109/207/305 (H, H/2, H/4 — no H/8 row: attend_div=8 has no d4) -->
   <g fill="#ffffff" stroke="#333333" stroke-width="1.5">
     <circle cx="930" cy="109" r="13"/>
     <circle cx="930" cy="207" r="13"/>
     <circle cx="930" cy="305" r="13"/>
-    <circle cx="930" cy="403" r="13"/>
   </g>
   <g font-size="12" fill="#333333" text-anchor="middle" font-weight="bold">
     <text x="930" y="113.5">C</text>
     <text x="930" y="211.5">C</text>
     <text x="930" y="309.5">C</text>
-    <text x="930" y="407.5">C</text>
   </g>
 
   <!-- ungated skips (rows H, H/2) -->
-  <line x1="290" y1="109" x2="914" y2="109" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
-  <line x1="290" y1="207" x2="914" y2="207" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+  <line x1="290" y1="109" x2="917" y2="109" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+  <line x1="290" y1="207" x2="917" y2="207" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
   <text x="600" y="99" text-anchor="middle" font-size="10.5" fill="#E58606">skip (ungated)</text>
   <text x="600" y="197" text-anchor="middle" font-size="10.5" fill="#E58606">skip (ungated)</text>
 
-  <!-- gated skips (rows H/4, H/8) -->
-  <line x1="290" y1="305" x2="553" y2="305" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+  <!-- gated skip (row H/4) — the only gate in this variant: gate3 alone, conditioned on z directly -->
+  <line x1="290" y1="305" x2="555" y2="305" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
   <rect x="555" y="283" width="96" height="44" rx="8" fill="#fff2cc" stroke="#D8A400" stroke-width="1.8"/>
   <text x="603" y="301" text-anchor="middle" font-size="11.5" fill="#7a5c00" font-weight="bold">AG₃ · α·x</text>
   <text x="603" y="317" text-anchor="middle" font-size="9.5" fill="#7a5c00">attention gate</text>
-  <line x1="651" y1="305" x2="914" y2="305" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
+  <line x1="651" y1="305" x2="917" y2="305" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
 
-  <line x1="290" y1="403" x2="553" y2="403" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
-  <rect x="555" y="381" width="96" height="44" rx="8" fill="#fff2cc" stroke="#D8A400" stroke-width="1.8"/>
-  <text x="603" y="399" text-anchor="middle" font-size="11.5" fill="#7a5c00" font-weight="bold">AG₄ · α·x</text>
-  <text x="603" y="415" text-anchor="middle" font-size="9.5" fill="#7a5c00">attention gate</text>
-  <line x1="651" y1="403" x2="914" y2="403" stroke="#E58606" stroke-width="1.8" marker-end="url(#aOrange)"/>
-
-  <!-- gating signals (purple dashed): AG4 from post-attention bottleneck, AG3 from d4 -->
-  <polyline points="603,458 603,427" fill="none" stroke="#7B5EA7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#aPurple)"/>
-  <text x="611" y="453" font-size="10.5" fill="#7B5EA7">g (H/16)</text>
-  <polyline points="980,388 680,356 631,331" fill="none" stroke="#7B5EA7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#aPurple)"/>
-  <text x="742" y="349" font-size="10.5" fill="#7B5EA7">g (d4, H/8)</text>
+  <!-- gating signal (purple dashed): g = z, straight from the bottleneck's top edge into AG3 -->
+  <polyline points="603,348 603,327" fill="none" stroke="#7B5EA7" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#aPurple)"/>
+  <text x="611" y="341" font-size="10.5" fill="#7B5EA7">g (H/8)</text>
 
   <!-- ================= decoder column ================= -->
-  <!-- numbered by output resolution (finest=d1 first), but EXECUTES coarse-to-fine: d4 first -->
-  <text x="1080" y="70" text-anchor="middle" font-size="9.5" fill="#666666" font-style="italic">flow executes d4 → d3 → d2 → d1 (coarse → full-res); numbered by resolution, not order</text>
+  <!-- numbered by output resolution (finest=d1 first), but EXECUTES coarse-to-fine: d3 first -->
+  <text x="1080" y="70" text-anchor="middle" font-size="9.5" fill="#666666" font-style="italic">flow executes d3 → d2 → d1 (coarse → full-res); numbered by resolution, not order</text>
   <g stroke="#4C72B0" fill="#dbe9f6" stroke-width="1.6">
     <rect x="980" y="80" width="200" height="58" rx="6"/>
     <rect x="980" y="178" width="200" height="58" rx="6"/>
     <rect x="980" y="276" width="200" height="58" rx="6"/>
-    <rect x="980" y="374" width="200" height="58" rx="6"/>
   </g>
   <g font-size="12.5" fill="#1d3d63" text-anchor="middle">
     <text x="1080" y="103" font-weight="bold">d1 · conv3×3 + BN + ReLU</text>
@@ -165,56 +152,51 @@
     <text x="1080" y="219" font-size="11" fill="#44618a">H/2 · 64 ch</text>
     <text x="1080" y="299" font-weight="bold">d3 · conv3×3 + BN + ReLU</text>
     <text x="1080" y="317" font-size="11" fill="#44618a">H/4 · 128 ch</text>
-    <text x="1080" y="397" font-weight="bold">d4 · conv3×3 + BN + ReLU</text>
-    <text x="1080" y="415" font-size="11" fill="#44618a">H/8 · 256 ch</text>
   </g>
   <!-- concat -> decoder block -->
   <g stroke="#333333" stroke-width="1.6">
-    <line x1="943" y1="109" x2="978" y2="109" marker-end="url(#aDark)"/>
-    <line x1="943" y1="207" x2="978" y2="207" marker-end="url(#aDark)"/>
-    <line x1="943" y1="305" x2="978" y2="305" marker-end="url(#aDark)"/>
-    <line x1="943" y1="403" x2="978" y2="403" marker-end="url(#aDark)"/>
+    <line x1="943" y1="109" x2="980" y2="109" marker-end="url(#aDark)"/>
+    <line x1="943" y1="207" x2="980" y2="207" marker-end="url(#aDark)"/>
+    <line x1="943" y1="305" x2="980" y2="305" marker-end="url(#aDark)"/>
   </g>
-  <!-- decoder upsampling into concat of the next-finer row -->
+  <!-- decoder upsampling into concat of the next-finer row (d3's own up2->concat, feeding it z, is drawn above) -->
   <g fill="none" stroke="#55A868" stroke-width="1.8">
-    <polyline points="1080,374 1080,340 930,340 930,320" marker-end="url(#aGreen)"/>
-    <polyline points="1080,276 1080,242 930,242 930,222" marker-end="url(#aGreen)"/>
-    <polyline points="1080,178 1080,144 930,144 930,124" marker-end="url(#aGreen)"/>
+    <polyline points="1080,276 1080,242 930,242 930,220" marker-end="url(#aGreen)"/>
+    <polyline points="1080,178 1080,144 930,144 930,122" marker-end="url(#aGreen)"/>
   </g>
   <g font-size="10.5" fill="#55A868">
-    <text x="1000" y="330">bilinear ↑2</text>
     <text x="1000" y="232">bilinear ↑2</text>
     <text x="1000" y="134">bilinear ↑2</text>
   </g>
 
   <!-- ================= heads ================= -->
-  <line x1="1180" y1="109" x2="1248" y2="109" stroke="#C44E52" stroke-width="1.8" marker-end="url(#aRed)"/>
+  <line x1="1180" y1="109" x2="1250" y2="109" stroke="#C44E52" stroke-width="1.8" marker-end="url(#aRed)"/>
   <rect x="1250" y="80" width="240" height="58" rx="6" fill="#fbe0dc" stroke="#C44E52" stroke-width="1.8"/>
   <text x="1370" y="103" text-anchor="middle" font-size="12.5" fill="#7c2a2d" font-weight="bold">heatmap head · conv3×3 → 1×1</text>
   <text x="1370" y="121" text-anchor="middle" font-size="11" fill="#a04a4d">corner heatmap · 1 × H × W · σ</text>
 
-  <line x1="1180" y1="305" x2="1248" y2="305" stroke="#2E8B74" stroke-width="1.8" marker-end="url(#aTeal)"/>
+  <line x1="1180" y1="305" x2="1250" y2="305" stroke="#2E8B74" stroke-width="1.8" marker-end="url(#aTeal)"/>
   <rect x="1250" y="276" width="240" height="58" rx="6" fill="#d9efe8" stroke="#2E8B74" stroke-width="1.8"/>
   <text x="1370" y="299" text-anchor="middle" font-size="12.5" fill="#1c5747" font-weight="bold">class head · conv3×3(128) → 1×1</text>
   <text x="1370" y="317" text-anchor="middle" font-size="11" fill="#2e7361">corner IDs · 16 × H/4 × W/4 · σ</text>
 
-  <!-- ================= attend_div=8 variant note (the config actually trained/ablated) ================= -->
+  <!-- ================= attend_div=16 variant note (native scaling target, not trained here) ================= -->
   <rect x="1250" y="145" width="240" height="115" rx="6" fill="#fffbe6" stroke="#D8A400" stroke-width="1.4" stroke-dasharray="4 3"/>
-  <text x="1370" y="163" text-anchor="middle" font-size="11" fill="#7a5c00" font-weight="bold">attend_div=8 variant</text>
-  <text x="1370" y="176" text-anchor="middle" font-size="8.5" fill="#7a5c00" font-style="italic">(640×480 — all trained/ablated runs)</text>
+  <text x="1370" y="163" text-anchor="middle" font-size="11" fill="#7a5c00" font-weight="bold">attend_div=16 variant</text>
+  <text x="1370" y="176" text-anchor="middle" font-size="8.5" fill="#7a5c00" font-style="italic">(1600×1200 — deployment scaling target)</text>
   <g font-size="9.5" fill="#5c4600">
-    <text x="1262" y="194">• no e5 — dilated r=2,4 pair → e4</text>
-    <text x="1262" y="209">• attention @ H/8 = 80×60 = 4 800 tok</text>
-    <text x="1262" y="224">• gate3 only (no gate4)</text>
-    <text x="1262" y="239">• decoder d3→d2→d1 (no d4)</text>
+    <text x="1262" y="194">• adds e5 — dilated r=2,4 pair moves out of e4</text>
+    <text x="1262" y="209">• attention @ H/16 = 100×75 = 7 500 tok</text>
+    <text x="1262" y="224">• adds gate4 on the H/8 skip</text>
+    <text x="1262" y="239">• decoder gains a d4: d4→d3→d2→d1</text>
   </g>
-  <text x="1370" y="253" text-anchor="middle" font-size="8" fill="#8a7000">main figure = native (attend_div=16, deployment target)</text>
+  <text x="1370" y="253" text-anchor="middle" font-size="8" fill="#8a7000">attend_div=8 (main figure) is trained; this is not</text>
 
   <!-- ================= legend ================= -->
   <rect x="60" y="630" width="560" height="240" rx="8" fill="#fafafa" stroke="#cccccc"/>
   <text x="78" y="656" font-size="12.5" fill="#333333" font-weight="bold">Legend</text>
   <rect x="78" y="668" width="34" height="18" rx="3" fill="#dbe9f6" stroke="#4C72B0" stroke-width="1.4"/>
-  <text x="122" y="682" font-size="11" fill="#333333">conv stage (blue): encoder ×2, decoder ×1 per box's own label; e5 dashed = ×2 + dilated ×2 (r=2,4)</text>
+  <text x="122" y="682" font-size="11" fill="#333333">conv stage (blue): encoder ×2, decoder ×1 per box's own label; e4 here = ×2 + dilated ×2 (r=2,4)</text>
   <rect x="78" y="694" width="34" height="18" rx="3" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.4"/>
   <text x="122" y="708" font-size="11" fill="#333333">transformer block: pre-norm MHSA + MLP, 2D axial RoPE on q, k</text>
   <rect x="78" y="720" width="34" height="18" rx="3" fill="#fff2cc" stroke="#D8A400" stroke-width="1.4"/>
@@ -244,27 +226,27 @@
   <rect x="678" y="700" width="96" height="52" rx="6" fill="#f2f2f2" stroke="#999999" stroke-width="1.4"/>
   <text x="726" y="722" text-anchor="middle" font-size="11" fill="#333333">crop @ peak</text>
   <text x="726" y="738" text-anchor="middle" font-size="10.5" fill="#666666">24 × 24 × 1</text>
-  <line x1="774" y1="726" x2="800" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
+  <line x1="774" y1="726" x2="802" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
 
   <rect x="802" y="700" width="150" height="52" rx="6" fill="#dbe9f6" stroke="#4C72B0" stroke-width="1.4"/>
   <text x="877" y="722" text-anchor="middle" font-size="11" fill="#1d3d63">conv3×3 ×3 + ReLU</text>
   <text x="877" y="738" text-anchor="middle" font-size="10.5" fill="#44618a">32 → 64 → 64 ch @ 24²</text>
-  <line x1="952" y1="726" x2="978" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
+  <line x1="952" y1="726" x2="980" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
 
   <rect x="980" y="700" width="140" height="52" rx="6" fill="#eeeeee" stroke="#888888" stroke-width="1.4"/>
   <text x="1050" y="722" text-anchor="middle" font-size="11" fill="#333333">centre-crop 8×8</text>
   <text x="1050" y="738" text-anchor="middle" font-size="10.5" fill="#666666">on features (fixed slice)</text>
-  <line x1="1120" y1="726" x2="1146" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
+  <line x1="1120" y1="726" x2="1148" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
 
   <rect x="1148" y="700" width="90" height="52" rx="6" fill="#dbe9f6" stroke="#4C72B0" stroke-width="1.4"/>
   <text x="1193" y="722" text-anchor="middle" font-size="11" fill="#1d3d63">3×3 → 1×1</text>
   <text x="1193" y="738" text-anchor="middle" font-size="10.5" fill="#44618a">→ 64 ch</text>
-  <line x1="1238" y1="726" x2="1264" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
+  <line x1="1238" y1="726" x2="1266" y2="726" stroke="#333333" stroke-width="1.5" marker-end="url(#aDark)"/>
 
   <rect x="1266" y="700" width="110" height="52" rx="6" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.4"/>
   <text x="1321" y="722" text-anchor="middle" font-size="11" fill="#4b3573">PixelShuffle ×8</text>
   <text x="1321" y="738" text-anchor="middle" font-size="10.5" fill="#6a5a8e">8×8×64 → 64×64</text>
-  <line x1="1376" y1="726" x2="1402" y2="726" stroke="#C44E52" stroke-width="1.5" marker-end="url(#aRed)"/>
+  <line x1="1376" y1="726" x2="1404" y2="726" stroke="#C44E52" stroke-width="1.5" marker-end="url(#aRed)"/>
 
   <rect x="1404" y="700" width="72" height="52" rx="6" fill="#fbe0dc" stroke="#C44E52" stroke-width="1.4"/>
   <text x="1440" y="722" text-anchor="middle" font-size="11" fill="#7c2a2d">64 × 64</text>

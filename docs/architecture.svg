@@ -187,7 +187,7 @@
   <rect x="78" y="668" width="34" height="18" rx="3" fill="#dbe9f6" stroke="#4C72B0" stroke-width="1.4"/>
   <text x="122" y="682" font-size="11" fill="#333333">conv stage (blue): encoder ×2, decoder ×1 per box's own label</text>
   <rect x="78" y="694" width="34" height="18" rx="3" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.4"/>
-  <text x="122" y="708" font-size="11" fill="#333333">transformer block: pre-norm MHSA+MLP, 2D axial RoPE on q,k · *XSA: optional, parameter-free</text>
+  <text x="122" y="708" font-size="11" fill="#333333">transformer block: pre-norm MHSA+MLP, 2D axial RoPE on q,k · *XSA: FAST only, parameter-free</text>
   <rect x="78" y="720" width="34" height="18" rx="3" fill="#fff2cc" stroke="#D8A400" stroke-width="1.4"/>
   <text x="122" y="734" font-size="11" fill="#333333">attention gate: α = σ(ψᵀ ReLU(Wₓx + W_g g)), pass-through init α₀ ≈ 0.95</text>
   <line x1="78" y1="756" x2="110" y2="756" stroke="#555555" stroke-width="1.8" marker-end="url(#aGray)"/>

@@ -81,3 +81,5 @@ configs/abl_sigma1.yaml
 configs/abl_width_half.yaml
 configs/abl_xsa.yaml
 configs/abl_xsa_nodilate.yaml
+
+figures/

@@ -70,6 +70,7 @@ from dcc.board import get_board, render_board
 from dcc.synth import (_apply_photometric, _perspective_factor, _sample_affine,
                         _sample_perspective, cut_refiner_crops, generate_sample, visible)
 
+_BG_REF_LUMA = 128.0
 _MARGIN = 8
 _PATCH = 24 + 2 * _MARGIN
 
@@ -113,7 +114,7 @@ def _window_transform(Hmat, wx0, wy0):
     return T @ Hmat
 
 
-def _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy):
+def _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy, cfg=None):
     """Pure per-corner window compositor -- no rng, factored out so it can be unit tested directly
     against the corresponding window of a real dcc.synth._composite_board call (see
     tests/test_refiner_fast.py::test_window_equivalence), mirroring dcc.synth.place_cutout's
@@ -126,6 +127,15 @@ def _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy):
     warped_mask = cv2.warpPerspective(mask_src, H_win, (_PATCH, _PATCH), flags=cv2.INTER_LINEAR,
                                        borderMode=cv2.BORDER_CONSTANT, borderValue=0)
     m = warped_mask[..., None]
+    r6 = cfg["synth"].get("integration", {}) if cfg is not None else {}
+    if r6.get("relight_enabled", False):
+        lum = cv2.cvtColor(bg_tile.astype(np.float32), cv2.COLOR_BGR2GRAY)
+        lo, hi = r6.get("relight_clip", [0.45, 1.7])
+        warped_board = warped_board * float(np.clip(lum.mean() / max(_BG_REF_LUMA, 1e-6), lo, hi))
+    f = r6.get("feather_px", 0.0)
+    if f > 0:
+        warped_mask = cv2.GaussianBlur(warped_mask, (0, 0), sigmaX=float(f))
+        m = warped_mask[..., None]
     work = bg_tile.astype(np.float32) * (1 - m) + warped_board * m
     return work, (wx0, wy0)
 
@@ -192,7 +202,7 @@ def fast_refiner_crops(cfg, rng, bg_files):
                 y0 = int(rng.integers(0, dh - _PATCH + 1))
                 x0 = int(rng.integers(0, dw - _PATCH + 1))
                 bg_tile = decoded[y0:y0 + _PATCH, x0:x0 + _PATCH]
-                work, origin = _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy)
+                work, origin = _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy, cfg)
                 H_win = _window_transform(Hmat, *origin)
                 board_mask = cv2.warpPerspective(mask_src, H_win, (_PATCH, _PATCH), flags=cv2.INTER_LINEAR,
                                                   borderMode=cv2.BORDER_CONSTANT, borderValue=0)

@@ -34,6 +34,8 @@ def build_parser():
     p.add_argument("--query-xy", type=_parse_xy, default=None, metavar="X,Y",
                    help="attention/erf/heatmap3d query point; default = strongest heatmap (or class) peak")
     p.add_argument("--gif", action="store_true", help="heatmap3d: also write a rotating-azimuth GIF")
+    p.add_argument("--feature-channels", type=int, default=3,
+                    help="features panel: individual channels shown per encoder stage (never averaged)")
     p.add_argument("--dpi", type=int, default=160)
     p.add_argument("--show", action="store_true", help="interactive windows after saving")
     return p
@@ -110,7 +112,7 @@ def _forward_hooked(model, x):
     """
     import torch
     feats, blk_in, gate_args, handles = {}, [], {}, []
-    for n in ("e1", "e2", "e3", "e4", "e5"):
+    for n in ("e1", "e2", "e3", "e4", "e5", "d4", "d3", "d2", "d1"):
         mod = getattr(model, n, None)
         if mod is not None:
             handles.append(mod.register_forward_hook(lambda m, i, o, n=n: feats.__setitem__(n, o.detach())))
@@ -118,6 +120,15 @@ def _forward_hooked(model, x):
         handles.append(blk.register_forward_pre_hook(
             lambda m, a, kw: blk_in.append((a[0] if a else next(iter(kw.values()))).detach()),
             with_kwargs=True))
+    norm_mod = getattr(model, "norm", None)
+    if norm_mod is not None:
+        def _norm_hook(m, i, o):
+            deep = feats.get("e5", feats.get("e4"))
+            if deep is None or o.dim() != 3:
+                return
+            B, C, hb, wb = deep.shape
+            feats["attn_out"] = o.detach().transpose(1, 2).reshape(B, C, hb, wb)
+        handles.append(norm_mod.register_forward_hook(_norm_hook))
     for n in ("gate3", "gate4"):
         mod = getattr(model, n, None)
         if mod is not None:
@@ -474,6 +485,19 @@ def panel_gate_flow(model, x, image, out, tag, suptitle, dpi, show, corners=None
             _no_ticks(ax, title)
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
+        figs, axs = plt.subplots(1, 4, figsize=(19.2, 5.2), squeeze=False)
+        for ax, m, title in (
+            (axs[0, 0], sk, f"1. ENCODER SKIP  $s_3$  (pre-gate)\n{sh(skip)} @ H/4"),
+            (axs[0, 1], gz, f"2. ATTENTION OUT  $z$  (post-transformer)\n{sh(g)} @ H/8"),
+            (axs[0, 2], gt, f"3. GATED SKIP  $s_3\\times\\alpha$\n{sh(gated)} @ H/4 -- what the gate admits"),
+            (axs[0, 3], cc, f"4. CONCATENATED  cat[up2($z$), $s_3\\alpha$]\n{sh(concat)} @ H/4 -- what $d_3$ convolves"),
+        ):
+            im = ax.imshow(m, cmap="magma")
+            _no_ticks(ax, title)
+            figs.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        figs.suptitle(f"Gated skip: what the decoder actually eats   |   {suptitle}", fontsize=12)
+        _finish(figs, out / f"gateflow_slide_{n}_{tag}.png", dpi, show)
+
         stats = f"mean={alpha_np.mean():.3f}  std={alpha_np.std():.3f}"
         axes[0, 5].hist(alpha_np.ravel(), bins=50, range=(0, 1), color="steelblue")
         axes[0, 5].axvline(INIT_ALPHA, color="red", ls="--", lw=1.5, label=f"pass-through init = {INIT_ALPHA}")
@@ -608,24 +632,81 @@ def panel_erf(model, x, image, args, out, tag, suptitle, dpi, show, model_b=None
     _finish(fig, out / f"erf_{tag}.png", dpi, show)
 
 
-def panel_features(model, x, image, out, tag, suptitle, dpi, show):
+def panel_features(model, x, image, out, tag, suptitle, dpi, show, k=3, corners=None):
+    """Encoder features as INDIVIDUAL CHANNELS, never a channel reduction."""
     import cv2
     import matplotlib.pyplot as plt
+    import numpy as np
 
     H, W = image.shape
     _, _, feats, _, _ = _forward_hooked(model, x)
-    names = [n for n in ("e1", "e2", "e3", "e4", "e5") if n in feats]
+    names = [n for n in ("e1", "e2", "e3", "e4", "e5", "attn_out", "d4", "d3", "d2", "d1")
+              if n in feats]
     if not names:
-        print("SKIP features: no e1..e5 encoder stages found")
+        print("SKIP features: no e1..e5 / d1..d4 stages found")
         return
-    fig, axes = plt.subplots(1, len(names), figsize=(4 * len(names), 4.2), squeeze=False)
-    for ax, n in zip(axes[0], names):
-        fmap = feats[n][0].abs().mean(dim=0).cpu().numpy()
-        ax.imshow(cv2.resize(fmap, (W, H), interpolation=cv2.INTER_LINEAR), cmap="viridis")
-        ax.set_title(n, fontsize=9)
+    gt = np.array([[c["x"], c["y"]] for c in (corners or []) if c.get("visible", True)],
+                  dtype=np.float32)
+    def board_mask(h, w):
+        """Convex hull of the visible INNER corners at this stage's resolution, dilated one
+        cell: the inner-corner hull understates the board by half a square on every side."""
+        if len(gt) < 3:
+            return None
+        hull = cv2.convexHull((gt / (W / w)).astype(np.float32))
+        mk = np.zeros((h, w), np.uint8)
+        cv2.fillConvexPoly(mk, hull.astype(np.int32), 1)
+        return cv2.dilate(mk, np.ones((3, 3), np.uint8)).astype(bool)
+
+    picks, label = {}, {"attn_out": "POST-ATTN"}
+    for n in names:
+        f = feats[n][0].cpu().numpy()
+        std = f.reshape(len(f), -1).std(axis=1)
+        mk = board_mask(*f.shape[1:])
+        if mk is not None and mk.any() and (~mk).any():
+            con = np.array([(f[c][mk].mean() - f[c][~mk].mean()) / (f[c].std() + 1e-9)
+                            for c in range(len(f))])
+            order = np.argsort(-np.abs(con))[:k]
+            picks[n] = (f, std, order, con)
+            print(f"  {n}: C={len(f)}, showing channels {list(map(int, order))} "
+                  f"(board contrast {', '.join(f'{con[i]:+.2f}' for i in order)} sd; "
+                  f"{int((np.abs(con) > 0.5).sum())}/{len(f)} channels board-selective)")
+        else:
+            order = np.argsort(-std)[:k]
+            picks[n] = (f, std, order, None)
+            print(f"  {n}: C={len(f)}, showing channels {list(map(int, order))} "
+                  f"(spatial sd {', '.join(f'{std[i]:.3f}' for i in order)}; no GT mask)")
+
+    def draw(ax, n, ch, std, f, fs, con=None):
+        m = cv2.resize(f[ch], (W, H), interpolation=cv2.INTER_LINEAR)
+        lo, hi = (float(np.percentile(m, 2)), float(np.percentile(m, 98)))
+        if float(m.min()) >= 0.0:
+            lo = 0.0
+        if hi <= lo:
+            hi = lo + 1e-6
+        ax.imshow(m, cmap="viridis", vmin=lo, vmax=hi)
+        stat = f"sd={std[ch]:.3f}" if con is None else f"board {con[ch]:+.2f} sd"
+        ax.set_title(f"{label.get(n, n)}  ch {ch}   {stat}", fontsize=fs)
         ax.axis("off")
-    fig.suptitle(f"encoder features (mean |activation|) | {suptitle}")
-    _finish(fig, out / f"features_{tag}.png", dpi, show)
+
+    for slide in (False, True):
+        kk = min(k, 2) if slide else k
+        rows, cols = (kk, len(names)) if slide else (len(names), kk)
+        fig, axes = plt.subplots(rows, cols,
+                                 figsize=(2.45 * cols, 2.35 * rows) if slide
+                                 else (3.5 * cols, 3.3 * rows), squeeze=False)
+        for i, n in enumerate(names):
+            f, std, order, con = picks[n]
+            for j, ch in enumerate(order[:kk]):
+                draw(axes[j, i] if slide else axes[i, j], n, ch, std, f, 7 if slide else 8, con)
+        fig.suptitle(
+            (f"Conv-ChArT feature channels, encoder -> attention -> decoder   |   "
+             f"{kk} most structured channels per stage, individually (no averaging)   |   "
+             f"ranked by board selectivity   |   colour scale is per-panel (2-98%)")
+            if slide else
+            (f"encoder + decoder features -- {k} most spatially structured channels per stage, "
+             f"SIGNED (yellow +, blue -, green 0), NO channel averaging | {suptitle}"),
+            fontsize=11 if slide else 10)
+        _finish(fig, out / (f"features_slide_{tag}.png" if slide else f"features_{tag}.png"), dpi, show)
 
 
 def main():
@@ -685,7 +766,8 @@ def main():
             suptitle_b = _suptitle(args.ckpt_b, tag, b_trained)
         panel_erf(model, x, image, args, out, tag, suptitle, args.dpi, args.show, model_b, suptitle_b)
     if "features" in requested:
-        panel_features(model, x, image, out, tag, suptitle, args.dpi, args.show)
+        panel_features(model, x, image, out, tag, suptitle, args.dpi, args.show,
+                       args.feature_channels, corners=(record.get("corners") if record else None))
 
     if args.show:
         import matplotlib.pyplot as plt

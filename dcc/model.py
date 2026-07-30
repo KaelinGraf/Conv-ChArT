@@ -77,9 +77,9 @@ class AxialRoPE(nn.Module):
 class Block(nn.Module):
     """Pre-norm MHSA + MLP (timm vision_transformer.Block shape), RoPE on Q,K."""
 
-    def __init__(self, d, heads, rope, mlp_ratio=4):
+    def __init__(self, d, heads, rope, mlp_ratio=4, xsa=False):
         super().__init__()
-        self.heads, self.rope = heads, rope
+        self.heads, self.rope, self.xsa = heads, rope, xsa
         self.n1, self.n2 = nn.LayerNorm(d, eps=1e-6), nn.LayerNorm(d, eps=1e-6)
         self.qkv = nn.Linear(d, 3 * d)
         self.proj = nn.Linear(d, d)
@@ -97,6 +97,9 @@ class Block(nn.Module):
     def forward(self, x):
         q, k, v = self.qkv_heads(self.n1(x))
         o = F.scaled_dot_product_attention(q, k, v)
+        if self.xsa:
+            vn = F.normalize(v, dim=-1)
+            o = o - (o * vn).sum(-1, keepdim=True) * vn
         x = x + self.proj(o.transpose(1, 2).reshape(x.shape))
         return x + self.mlp(self.n2(x))
 
@@ -128,43 +131,57 @@ class DetectorNet(nn.Module):
     freeze_trunk boundary.
     """
 
-    def __init__(self, h, w, d=256, heads=8, n_blocks=2, rope_lambda_min=2.5, n_cls=16, attend_div=16):
+    def __init__(self, h, w, d=256, heads=8, n_blocks=2, rope_lambda_min=2.5, n_cls=16, attend_div=16,
+                 gates=True, width_mult=1.0,
+                xsa=False, e4_dilated=True):
         super().__init__()
+        def c(n):
+            return max(8, int(round(n * width_mult / 8)) * 8)
+        d = c(d)
+        assert d % heads == 0, f"scaled d={d} not divisible by heads={heads}"
+        self.width_mult = width_mult
         assert attend_div in (8, 16), f"attend_div must be 8 or 16, got {attend_div}"
         assert h % 16 == 0 and w % 16 == 0, f"h, w must be multiples of 16, got {(h, w)}"
         self.attend_div = attend_div
         self.pool = nn.MaxPool2d(2)
-        self.e1 = double_conv(1, 32)
-        self.e2 = double_conv(32, 64)
-        self.e3 = double_conv(64, 128)
+        self.e1 = double_conv(1, c(32))
+        self.e2 = double_conv(c(32), c(64))
+        self.e3 = double_conv(c(64), c(128))
+        self.e4_dilated = e4_dilated
+
+        def _deep(cin, cout):
+            core = double_conv(cin, cout)
+            if not e4_dilated:
+                return core
+            return nn.Sequential(core,
+                                 conv_bn_relu(cout, cout, dilation=2),
+                                 conv_bn_relu(cout, cout, dilation=4))
+
         if attend_div == 16:
-            self.e4 = double_conv(128, 256)
-            self.e5 = nn.Sequential(double_conv(256, 256),
-                                    conv_bn_relu(256, 256, dilation=2),
-                                    conv_bn_relu(256, 256, dilation=4))
+            self.e4 = double_conv(c(128), c(256))
+            self.e5 = _deep(c(256), c(256))
             grid_h, grid_w = h // 16, w // 16
         else:
-            self.e4 = nn.Sequential(double_conv(128, 256),
-                                    conv_bn_relu(256, 256, dilation=2),
-                                    conv_bn_relu(256, 256, dilation=4))
+            self.e4 = _deep(c(128), c(256))
             grid_h, grid_w = h // 8, w // 8
         self.rope = AxialRoPE(d // heads, grid_h, grid_w, rope_lambda_min)
-        self.blocks = nn.ModuleList(Block(d, heads, self.rope) for _ in range(n_blocks))
+        self.blocks = nn.ModuleList(Block(d, heads, self.rope, xsa=xsa) for _ in range(n_blocks))
+        self.gates_on = gates
         self.norm = nn.LayerNorm(d, eps=1e-6)
         if attend_div == 16:
-            self.gate4 = AttnGate(256, 256, 128)
-            self.gate3 = AttnGate(128, 256, 64)
-            self.d4 = conv_bn_relu(256 + 256, 256)
-            self.d3 = conv_bn_relu(256 + 128, 128)
+            self.gate4 = AttnGate(c(256), c(256), c(128))
+            self.gate3 = AttnGate(c(128), c(256), c(64))
+            self.d4 = conv_bn_relu(c(256) + c(256), c(256))
+            self.d3 = conv_bn_relu(c(256) + c(128), c(128))
         else:
-            self.gate3 = AttnGate(128, 256, 64)
-            self.d3 = conv_bn_relu(256 + 128, 128)
-        self.d2 = conv_bn_relu(128 + 64, 64)
-        self.d1 = conv_bn_relu(64 + 32, 32)
-        self.hm = nn.Sequential(nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(inplace=True),
-                                nn.Conv2d(32, 1, 1))
-        self.cls = nn.Sequential(nn.Conv2d(128, 128, 3, padding=1), nn.ReLU(inplace=True),
-                                 nn.Conv2d(128, n_cls, 1))
+            self.gate3 = AttnGate(c(128), c(256), c(64))
+            self.d3 = conv_bn_relu(c(256) + c(128), c(128))
+        self.d2 = conv_bn_relu(c(128) + c(64), c(64))
+        self.d1 = conv_bn_relu(c(64) + c(32), c(32))
+        self.hm = nn.Sequential(nn.Conv2d(c(32), c(32), 3, padding=1), nn.ReLU(inplace=True),
+                                nn.Conv2d(c(32), 1, 1))
+        self.cls = nn.Sequential(nn.Conv2d(c(128), c(128), 3, padding=1), nn.ReLU(inplace=True),
+                                 nn.Conv2d(c(128), n_cls, 1))
         nn.init.constant_(self.hm[-1].bias, -2.19)
         nn.init.constant_(self.cls[-1].bias, -2.19)
 
@@ -183,10 +200,10 @@ class DetectorNet(nn.Module):
             t = blk(t)
         z = self.norm(t).transpose(1, 2).reshape(B, C, Hb, Wb)
         if self.attend_div == 16:
-            y = self.d4(torch.cat([up2(z), self.gate4(s4, z)], 1))
-            y = self.d3(torch.cat([up2(y), self.gate3(s3, y)], 1))
+            y = self.d4(torch.cat([up2(z), self.gate4(s4, z) if self.gates_on else s4], 1))
+            y = self.d3(torch.cat([up2(y), self.gate3(s3, y) if self.gates_on else s3], 1))
         else:
-            y = self.d3(torch.cat([up2(z), self.gate3(s3, z)], 1))
+            y = self.d3(torch.cat([up2(z), self.gate3(s3, z) if self.gates_on else s3], 1))
         cls = self.cls(y)
         y = self.d2(torch.cat([up2(y), s2], 1))
         y = self.d1(torch.cat([up2(y), s1], 1))
@@ -195,13 +212,18 @@ class DetectorNet(nn.Module):
 
 def detector_kwargs(cfg):
     """DetectorNet's config-tunable constructor kwargs (attend_div, n_blocks, heads,
-    rope_lambda_min), read from a loaded cfg dict with the exact same defaults DetectorNet's own
-    signature uses -- the one place tools/train_detector.py and tools/preflight.py both read
-    these from, so the two model-construction sites can't drift apart. n_cls is deliberately
-    excluded: it's derived from cfg["board"] via dcc.board.n_corners, not a flat cfg key.
+    rope_lambda_min, xsa), read from a loaded cfg dict with the exact same defaults
+    DetectorNet's own signature uses -- the one place tools/train_detector.py and
+    tools/preflight.py both read these from, so the two model-construction sites can't drift
+    apart. n_cls is deliberately excluded: it's derived from cfg["board"] via
+    dcc.board.n_corners, not a flat cfg key.
     """
     return {"attend_div": cfg.get("attend_div", 16), "n_blocks": cfg.get("attn_blocks", 2),
-            "heads": cfg.get("attn_heads", 8), "rope_lambda_min": cfg.get("rope_lambda_min_cells", 2.5)}
+            "heads": cfg.get("attn_heads", 8), "rope_lambda_min": cfg.get("rope_lambda_min_cells", 2.5),
+            "xsa": cfg.get("xsa", False),
+            "gates": cfg.get("gates_enabled", True),
+            "width_mult": cfg.get("width_mult", 1.0),
+            "e4_dilated": cfg.get("e4_dilated", True)}
 
 
 class Refiner(nn.Module):

@@ -29,6 +29,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+MIN_CORNERS = 4
+
 
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__)
@@ -58,14 +60,14 @@ def _accept_pose(rng, i, W, H, s_lo, s_hi, lattice, visible):
         Raxis, _ = cv2.Rodrigues(tilt * np.array([np.cos(psi), np.sin(psi), 0.0]))
         cp, sp = np.cos(phi), np.sin(phi)
         R = np.array([[cp, -sp, 0.0], [sp, cp, 0.0], [0.0, 0.0, 1.0]]) @ Raxis
-        u, v = cx + rng.uniform(-0.35, 0.35) * W, cy + rng.uniform(-0.35, 0.35) * H
+        u, v = cx + rng.uniform(-0.45, 0.45) * W, cy + rng.uniform(-0.45, 0.45) * H
         t = z * (np.linalg.inv(K) @ np.array([u, v, 1.0])) - R @ np.array([2.5, 2.5, 0.0])
 
         cam_z = (lattice @ R.T + t)[:, 2]
         rvec, _ = cv2.Rodrigues(R)
         img_pts = cv2.projectPoints(lattice, rvec, t, K, None)[0].reshape(-1, 2)
         n_in = sum(visible((x, y), [], (W, H)) for x, y in img_pts)
-        if n_in >= 8 and (cam_z > 0).all():
+        if n_in >= MIN_CORNERS and (cam_z > 0).all():
             return K, R, t, s_target, img_pts, tries
     raise RuntimeError(f"image {i}: no acceptable pose within 100 tries -- check scale_range_px / K envelope")
 

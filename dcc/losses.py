@@ -17,12 +17,23 @@ def focal(logits, y, alpha=2, beta=4):
     return -(l_pos.sum() + l_neg.sum())
 
 
-def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0):
+def strict_bce(logits, y):
+    """ABLATION A-CE counterpart to focal(): the STRICT reading of the same targets."""
+    z = logits.float()
+    pos = (y == 1.0).float()
+    return F.binary_cross_entropy_with_logits(z, pos, reduction="sum")
+
+
+def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_form="focal",
+                   beta=4):
     """Batch-normalised by total visible corners, shared N for both heads; clamped so N=0 batches
-    (all-negative, no visible corners) divide by 1 instead of by zero.
+    (all-negative, no visible corners) divide by 1 instead of by zero. loss_form="ce" swaps BOTH
+    heads to strict_bce (A-CE).
     """
     n = max(float(n_vis_batch), 1.0)
-    return (focal(hm_logit, hm_t) + lam * focal(cls_logit, cls_t)) / n
+    if loss_form == "ce":
+        return (strict_bce(hm_logit, hm_t) + lam * strict_bce(cls_logit, cls_t)) / n
+    return (focal(hm_logit, hm_t, beta=beta) + lam * focal(cls_logit, cls_t, beta=beta)) / n
 
 
 def refiner_loss(logits, targets):

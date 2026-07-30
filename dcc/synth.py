@@ -307,6 +307,33 @@ def _warp_mask(H, render_res, w2, h2):
                                 borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
+
+def _integrate_board(cfg, rng, bg, board, mask, w2, h2):
+    """rev-6 scene integration (Kaelin 2026-07-29): make the board look LIT INTO the scene rather
+    than CUT INTO it.
+    """
+    r6 = cfg["synth"].get("integration", {})
+    if r6.get("relight_enabled", False):
+        lum = cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY)
+        sigma = max(r6.get("relight_sigma_frac", 0.125) * min(w2, h2), 1.0)
+        field = cv2.GaussianBlur(lum, (0, 0), sigmaX=sigma)
+        field = field / max(float(field.mean()), 1e-6)
+        lo, hi = r6.get("relight_clip", [0.45, 1.7])
+        board = board * np.clip(field, lo, hi)[..., None]
+    if r6.get("shadow_enabled", False):
+        ang = float(rng.uniform(0, 2 * np.pi))
+        off = float(rng.uniform(*r6.get("shadow_offset_frac", [0.005, 0.03]))) * min(w2, h2)
+        Mt = np.float32([[1, 0, off * np.cos(ang)], [0, 1, off * np.sin(ang)]])
+        sh = cv2.warpAffine(mask, Mt, (w2, h2), flags=cv2.INTER_LINEAR, borderValue=0)
+        sh = cv2.GaussianBlur(sh, (0, 0), sigmaX=max(off * 0.6, 1.0))
+        k = float(rng.uniform(*r6.get("shadow_strength", [0.15, 0.5])))
+        board_free = np.clip(sh * (1.0 - mask), 0.0, 1.0)
+        bg = bg * (1.0 - k * board_free)[..., None]
+    f = r6.get("feather_px", 0.0)
+    if f > 0:
+        mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=float(f))
+    return board, mask, bg
+
 def _composite_board(bg_crop, rng, cfg, w2, h2, s_arg, size_mult, components):
     """Render the board once, sample its affine + perspective factors, histogram-match it to the
     background crop, anti-alias prefilter it when minifying (synth.prefilter -- pixel-only, no
@@ -337,8 +364,10 @@ def _composite_board(bg_crop, rng, cfg, w2, h2, s_arg, size_mult, components):
     warped_board = cv2.warpPerspective(matched, H, (w2, h2), flags=cv2.INTER_LINEAR,
                                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
     warped_mask = _warp_mask(H, render_res, w2, h2)
+    warped_board, warped_mask, bg_lit = _integrate_board(cfg, rng, bg_crop.astype(np.float32),
+                                                          warped_board, warped_mask, w2, h2)
     m = warped_mask[..., None]
-    work = bg_crop.astype(np.float32) * (1 - m) + warped_board * m
+    work = bg_lit * (1 - m) + warped_board * m
 
     p_hom = np.hstack([p_render, np.ones((len(p_render), 1))]) @ H.T
     p_img = p_hom[:, :2] / p_hom[:, 2:3]
@@ -581,8 +610,16 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None, board_mask=Non
         ang = rng.uniform(0, 2 * np.pi)
         ys, xs = abs_grid()
         illum_lobe = floor + (peak - floor) * np.exp(-0.5 * ((xs - cxb) ** 2 + (ys - cyb) ** 2) / sigma ** 2)
-        i_lit = np.clip(work * (ambient + illum_lobe)[..., None].astype(np.float32), 0, 255)
-        i_unlit = np.clip(work * ambient, 0, 255)
+        lit_raw = work * (ambient + illum_lobe)[..., None].astype(np.float32)
+        if ph.get("differencing_autoexposure", False):
+            hi = float(np.percentile(lit_raw, 99.9))
+            gain = min(1.0, ph.get("differencing_ae_target", 250.0) / max(hi, 1e-6))
+            lit_raw = lit_raw * gain
+            ambient_eff = ambient * gain
+        else:
+            ambient_eff = ambient
+        i_lit = np.clip(lit_raw, 0, 255)
+        i_unlit = np.clip(work * ambient_eff, 0, 255)
 
         K = rng.uniform(*ph["sensor_noise_electrons_per_dn"])
         sigma_read = rng.uniform(*ph["sensor_noise_read_std"])
@@ -651,7 +688,7 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None, board_mask=Non
         cx, cy = rng.uniform(0, w2), rng.uniform(0, h2)
         ax, ay = rng.uniform(20, 120), rng.uniform(20, 120)
         ang = rng.uniform(0, np.pi)
-        peak = rng.uniform(40, 200)
+        peak = rng.uniform(*ph.get("glare_peak", (30, 130)))
         ys, xs = abs_grid()
         xr = (xs - cx) * np.cos(ang) + (ys - cy) * np.sin(ang)
         yr = -(xs - cx) * np.sin(ang) + (ys - cy) * np.cos(ang)

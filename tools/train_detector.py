@@ -60,6 +60,9 @@ def build_parser():
     p.add_argument("--name", default="run")
     p.add_argument("--resume", default=None, help="checkpoint .pt to resume from")
     p.add_argument("--steps", type=int, default=None, help="override cfg train.steps")
+    p.add_argument("--workers", type=int, default=None, help="override cfg train.workers -- cap this when "
+                   "another training run holds its own loader pool; spawn workers live in /dev/shm and this "
+                   "machine has hard-locked twice on kswapd shmem_writepage reclaim at high aggregate counts")
     p.add_argument("--freeze-trunk", action="store_true")
     p.add_argument("--retarget-from", default=None,
                     help="base checkpoint .pt to retarget onto this config's board (loads every "
@@ -389,7 +392,8 @@ def run_validation(model, loader, cfg, device, tau_hm, match_px, preview_dir=Non
                 # n_vis_batch is a scalar in detector_loss (float(n_vis_batch)
                 # in its body) -- sum the per-sample counts, don't pass the
                 # (B,) batch tensor.
-                loss = detector_loss(hm_logits, cls_logits, hms_d, cts_d, nvis_d.sum(), cfg["lambda_cls"])
+                loss = detector_loss(hm_logits, cls_logits, hms_d, cts_d, nvis_d.sum(), cfg["lambda_cls"],
+                                      loss_form=cfg.get("loss_form", "focal"), beta=cfg.get("focal_beta", 4))
             loss_sum += float(loss) * images.shape[0]
             loss_n += images.shape[0]
 
@@ -489,6 +493,8 @@ def main():
     cfg = load_config(args.config)
     if args.steps is not None:
         cfg["train"]["steps"] = args.steps
+    if args.workers is not None:
+        cfg["train"]["workers"] = args.workers
     tcfg = cfg["train"]
 
     W, H = cfg["input_size"]
@@ -580,7 +586,8 @@ def main():
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             hm_logits, cls_logits = model(images)
-            loss = detector_loss(hm_logits, cls_logits, hms, cts, nvis.sum(), cfg["lambda_cls"]) / accum
+            loss = detector_loss(hm_logits, cls_logits, hms, cts, nvis.sum(), cfg["lambda_cls"],
+                                  loss_form=cfg.get("loss_form", "focal"), beta=cfg.get("focal_beta", 4)) / accum
         loss.backward()
         accum_loss += float(loss.detach()) * accum
         micro += 1

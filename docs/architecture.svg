@@ -25,7 +25,7 @@
 
   <rect x="0" y="0" width="1520" height="900" fill="#ffffff"/>
   <text x="760" y="30" text-anchor="middle" font-size="17" fill="#222222" font-weight="bold">Conv-ChArT detector — hybrid convolutional–transformer architecture</text>
-  <text x="760" y="46" text-anchor="middle" font-size="11" fill="#666666" font-style="italic">attend_div=8 · 640×480 — the trained/ablated configuration (native attend_div=16, 1600×1200 scaling variant: inset, upper right)</text>
+  <text x="760" y="46" text-anchor="middle" font-size="11" fill="#666666" font-style="italic">attend_div=8 · 640×480 · channels read Conv-ChArT / Conv-ChArT-FAST (width 0.5 / 0.25) · 882,402 / 222,138 detector params + 97,056 shared refiner</text>
 
   <!-- input -->
   <rect x="90" y="42" width="200" height="24" rx="4" fill="#f2f2f2" stroke="#999999"/>
@@ -33,7 +33,7 @@
   <line x1="190" y1="66" x2="190" y2="80" stroke="#555555" stroke-width="1.6" marker-end="url(#aGray)"/>
 
   <!-- ================= encoder column ================= -->
-  <!-- attend_div=8: e4 is the deepest stage (dilated r=2,4 pair lives here); no e5 -->
+  <!-- attend_div=8: e4 is the deepest stage; plain conv x2 (the dilated r=2,4 pair was removed, A-NODILATE) -->
   <g stroke="#4C72B0" fill="#dbe9f6" stroke-width="1.6">
     <rect x="90" y="80" width="200" height="58" rx="6"/>
     <rect x="90" y="178" width="200" height="58" rx="6"/>
@@ -42,13 +42,13 @@
   </g>
   <g font-size="12.5" fill="#1d3d63" text-anchor="middle">
     <text x="190" y="103" font-weight="bold">e1 · [conv3×3 + BN + ReLU] ×2</text>
-    <text x="190" y="121" font-size="11" fill="#44618a">H × W · 32 ch</text>
+    <text x="190" y="121" font-size="11" fill="#44618a">H × W · 16/8 ch</text>
     <text x="190" y="201" font-weight="bold">e2 · [conv3×3 + BN + ReLU] ×2</text>
-    <text x="190" y="219" font-size="11" fill="#44618a">H/2 · 64 ch</text>
+    <text x="190" y="219" font-size="11" fill="#44618a">H/2 · 32/16 ch</text>
     <text x="190" y="299" font-weight="bold">e3 · [conv3×3 + BN + ReLU] ×2</text>
-    <text x="190" y="317" font-size="11" fill="#44618a">H/4 · 128 ch</text>
-    <text x="190" y="397" font-weight="bold">e4 · conv×2 + dilated conv×2</text>
-    <text x="190" y="415" font-size="11" fill="#44618a">H/8 · 256 ch (r = 2, 4 on the ×2)</text>
+    <text x="190" y="317" font-size="11" fill="#44618a">H/4 · 64/32 ch</text>
+    <text x="190" y="397" font-weight="bold">e4 · [conv3×3 + BN + ReLU] ×2</text>
+    <text x="190" y="415" font-size="11" fill="#44618a">H/8 · 128/64 ch</text>
   </g>
   <!-- encoder downsampling arrows -->
   <g stroke="#555555" stroke-width="1.6">
@@ -77,7 +77,7 @@
   <!-- sub-layer 1: x = x + Wo(MHSA(LN(x))), RoPE on Q,K only -->
   <polyline points="396,403 396,376 738,376 738,393" fill="none" stroke="#7B5EA7" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#aPurple)"/>
   <rect x="404" y="384" width="310" height="38" rx="4" fill="#ffffff" stroke="#a08cc4" stroke-width="1"/>
-  <text x="559" y="399" text-anchor="middle" font-size="10.5" fill="#4b3573" font-weight="bold">LN → MHSA · 8 heads → Wₒ</text>
+  <text x="559" y="399" text-anchor="middle" font-size="10.5" fill="#4b3573" font-weight="bold">LN → MHSA · 8 heads → XSA* → Wₒ</text>
   <text x="559" y="414" text-anchor="middle" font-size="9" fill="#6a5a8e">2D axial RoPE on Q, K only (not V)</text>
   <line x1="714" y1="403" x2="728" y2="403" stroke="#4b3573" stroke-width="1.2" marker-end="url(#aPurple)"/>
   <circle cx="738" cy="403" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
@@ -95,7 +95,7 @@
   <circle cx="738" cy="457" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
   <text x="738" y="461.5" text-anchor="middle" font-size="12" fill="#4b3573">+</text>
 
-  <text x="590" y="494" text-anchor="middle" font-size="10" fill="#6a5a8e">tokens (trained, attend_div=8) = H/8 grid = 80 × 60 = 4 800 · d = 256</text>
+  <text x="590" y="494" text-anchor="middle" font-size="10" fill="#6a5a8e">tokens (attend_div=8) = H/8 grid = 80 × 60 = 4 800 · d = 128/64</text>
 
   <!-- epilogue LN: applied ONCE after the ×2 loop (self.norm), not part of either block above -->
   <line x1="748" y1="457" x2="810" y2="457" stroke="#4b3573" stroke-width="1.4" marker-end="url(#aPurple)"/>
@@ -147,11 +147,11 @@
   </g>
   <g font-size="12.5" fill="#1d3d63" text-anchor="middle">
     <text x="1080" y="103" font-weight="bold">d1 · conv3×3 + BN + ReLU</text>
-    <text x="1080" y="121" font-size="11" fill="#44618a">H × W · 32 ch</text>
+    <text x="1080" y="121" font-size="11" fill="#44618a">H × W · 16/8 ch</text>
     <text x="1080" y="201" font-weight="bold">d2 · conv3×3 + BN + ReLU</text>
-    <text x="1080" y="219" font-size="11" fill="#44618a">H/2 · 64 ch</text>
+    <text x="1080" y="219" font-size="11" fill="#44618a">H/2 · 32/16 ch</text>
     <text x="1080" y="299" font-weight="bold">d3 · conv3×3 + BN + ReLU</text>
-    <text x="1080" y="317" font-size="11" fill="#44618a">H/4 · 128 ch</text>
+    <text x="1080" y="317" font-size="11" fill="#44618a">H/4 · 64/32 ch</text>
   </g>
   <!-- concat -> decoder block -->
   <g stroke="#333333" stroke-width="1.6">
@@ -177,28 +177,17 @@
 
   <line x1="1180" y1="305" x2="1250" y2="305" stroke="#2E8B74" stroke-width="1.8" marker-end="url(#aTeal)"/>
   <rect x="1250" y="276" width="240" height="58" rx="6" fill="#d9efe8" stroke="#2E8B74" stroke-width="1.8"/>
-  <text x="1370" y="299" text-anchor="middle" font-size="12.5" fill="#1c5747" font-weight="bold">class head · conv3×3(128) → 1×1</text>
+  <text x="1370" y="299" text-anchor="middle" font-size="12.5" fill="#1c5747" font-weight="bold">class head · conv3×3(64/32) → 1×1</text>
   <text x="1370" y="317" text-anchor="middle" font-size="11" fill="#2e7361">corner IDs · 16 × H/4 × W/4 · σ</text>
 
-  <!-- ================= attend_div=16 variant note (native scaling target, not trained here) ================= -->
-  <rect x="1250" y="145" width="240" height="115" rx="6" fill="#fffbe6" stroke="#D8A400" stroke-width="1.4" stroke-dasharray="4 3"/>
-  <text x="1370" y="163" text-anchor="middle" font-size="11" fill="#7a5c00" font-weight="bold">attend_div=16 variant</text>
-  <text x="1370" y="176" text-anchor="middle" font-size="8.5" fill="#7a5c00" font-style="italic">(1600×1200 — deployment scaling target)</text>
-  <g font-size="9.5" fill="#5c4600">
-    <text x="1262" y="194">• adds e5 — dilated r=2,4 pair moves out of e4</text>
-    <text x="1262" y="209">• attention @ H/16 = 100×75 = 7 500 tok</text>
-    <text x="1262" y="224">• adds gate4 on the H/8 skip</text>
-    <text x="1262" y="239">• decoder gains a d4: d4→d3→d2→d1</text>
-  </g>
-  <text x="1370" y="253" text-anchor="middle" font-size="8" fill="#8a7000">attend_div=8 (main figure) is trained; this is not</text>
 
   <!-- ================= legend ================= -->
   <rect x="60" y="630" width="560" height="240" rx="8" fill="#fafafa" stroke="#cccccc"/>
   <text x="78" y="656" font-size="12.5" fill="#333333" font-weight="bold">Legend</text>
   <rect x="78" y="668" width="34" height="18" rx="3" fill="#dbe9f6" stroke="#4C72B0" stroke-width="1.4"/>
-  <text x="122" y="682" font-size="11" fill="#333333">conv stage (blue): encoder ×2, decoder ×1 per box's own label; e4 here = ×2 + dilated ×2 (r=2,4)</text>
+  <text x="122" y="682" font-size="11" fill="#333333">conv stage (blue): encoder ×2, decoder ×1 per box's own label</text>
   <rect x="78" y="694" width="34" height="18" rx="3" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.4"/>
-  <text x="122" y="708" font-size="11" fill="#333333">transformer block: pre-norm MHSA + MLP, 2D axial RoPE on q, k</text>
+  <text x="122" y="708" font-size="11" fill="#333333">transformer block: pre-norm MHSA+MLP, 2D axial RoPE on q,k · *XSA: optional, parameter-free</text>
   <rect x="78" y="720" width="34" height="18" rx="3" fill="#fff2cc" stroke="#D8A400" stroke-width="1.4"/>
   <text x="122" y="734" font-size="11" fill="#333333">attention gate: α = σ(ψᵀ ReLU(Wₓx + W_g g)), pass-through init α₀ ≈ 0.95</text>
   <line x1="78" y1="756" x2="110" y2="756" stroke="#555555" stroke-width="1.8" marker-end="url(#aGray)"/>

@@ -1,10 +1,37 @@
+e4_dilated: false
+width_mult: 0.25
+# A-NODILATE+WIDTH_QUARTER (sigma_hm 0.5). THREE keys vs configs/rev640.yaml; only
+# width_mult is the VARIABLE -- nodilate is the norm, sigma 0.5 won the ladder.
+#
+# Third rung of the width ladder 1.0 -> 0.5 -> 0.25, all with nodilate + sigma 0.5, so the
+# three points bracket where the capacity cliff is rather than guessing at it.
+#
+# Channel widths after c(n) = max(8, round(n*0.25/8)*8):
+#   e1 8, e2 16, e3 32, e4 64, attention d 64 (heads 8 -> HEAD DIM 8).
+#
+# WATCH: head dim 8 is the smallest this architecture has run. AxialRoPE splits the head
+# dim per axis, so that is 4 frequencies per axis versus 16 at full width. The
+# no-global-alias guarantee still holds (lambda_max >= 2x grid extent is a property of the
+# slowest pair, not the count), but the vernier code is far coarser. If this arm fails
+# where 0.5 held, RoPE resolution is a candidate cause distinct from raw capacity.
+#
+# Kaelin 2026-07-30 ruled out two other levers before this one, for reasons worth keeping:
+#   * attn_blocks 2 -> 1: "quite likely that the double attention does a fair bit of work"
+#   * depthwise-separable convs: "WORST in our setting (high res, low channel count), and
+#     are poor with memory management so often dont improve wallclock at all" -- correct;
+#     the depthwise op is bandwidth-bound at these shapes, so the FLOP saving does not
+#     become a time saving.
+#   * and the framing: "the current vram usage (even the 880k params) is neglegible", so
+#     parameter count is a deployment/story lever here, not a constraint being hit.
+#
+# Control: abl_nodilate_width_half_s05_50k_rev6 (same keys, width_mult 0.5).
 # 640x480 fast-baseline arm (attend_div=8, 4-stage encoder, H/8 attention): the
 # A1/A9 ablation platform, measured 140-142 samples/s vs native's 25.9. scale_range_px
 # below is in INPUT px like default.yaml's, but since input_size differs the physical
 # (sensor-plane) distance envelope it covers differs too -- intentional, this arm is
 # for the resolution-comparison study, not a physical-scale match to the native config.
 input_size: [640, 480]   # (W, H) network input
-sigma_hm: 2.0
+sigma_hm: 0.5
 sigma_cls: 1.0
 alpha: 2
 beta: 4

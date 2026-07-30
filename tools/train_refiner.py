@@ -47,6 +47,9 @@ def build_parser():
     p.add_argument("--name", default="run")
     p.add_argument("--resume", default=None, help="checkpoint .pt to resume from")
     p.add_argument("--steps", type=int, default=None, help="override cfg refiner_train.steps")
+    p.add_argument("--workers", type=int, default=None, help="override cfg refiner_train.workers -- cap this "
+                   "when another job is running: loader workers live in /dev/shm and the machine has hard-locked "
+                   "twice on kswapd shmem_writepage reclaim stalls at high worker counts")
     return p
 
 
@@ -198,6 +201,8 @@ def main():
     cfg = load_config(args.config)
     if args.steps is not None:
         cfg["refiner_train"]["steps"] = args.steps
+    if args.workers is not None:
+        cfg["refiner_train"]["workers"] = args.workers
     rcfg = cfg["refiner_train"]
 
     model = Refiner().to(device, memory_format=torch.channels_last)

@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import onnx
 import torch
+import torch.nn.functional as F
 import pytest
 
 from dcc.model import DetectorNet, Refiner, AxialRoPE
@@ -169,6 +170,61 @@ def test_forward_deterministic():
     assert torch.equal(r(xr), r(xr))
 
 
+def test_xsa_default_off_is_noop():
+    """xsa is an optional, default-off flag -- must not perturb the headline
+    model (mid-training as of this writing). No xsa arg vs xsa=False must
+    build identical params and produce bit-identical output."""
+    torch.manual_seed(0)
+    m1 = DetectorNet(64, 64)
+    torch.manual_seed(0)
+    m2 = DetectorNet(64, 64, xsa=False)
+
+    p1 = list(m1.named_parameters())
+    p2 = list(m2.named_parameters())
+    assert len(p1) == len(p2)
+    for (n1, t1), (n2, t2) in zip(p1, p2):
+        assert n1 == n2
+        assert torch.equal(t1, t2), n1
+    assert sum(t.numel() for _, t in p1) == sum(t.numel() for _, t in p2)   # xsa adds no parameters
+
+    m1.eval(); m2.eval()
+    x = torch.randn(2, 1, 64, 64)
+    hm1, cls1 = m1(x)
+    hm2, cls2 = m2(x)
+    assert torch.equal(hm1, hm2)
+    assert torch.equal(cls1, cls2)
+
+
+def test_xsa_orthogonal_to_self_value():
+    """With xsa=True, each head's post-XSA attention output (proj's actual
+    input, tapped live off the real forward -- not re-derived from the XSA
+    formula) must be orthogonal to that head's own value vector by
+    construction (Zhai eq. 2). Wrong dim in F.normalize, or applying after
+    proj / after head concat instead of per-head before it, would leave a
+    nonzero cosine here."""
+    torch.manual_seed(0)
+    m = DetectorNet(64, 64, xsa=True).eval()
+    x = torch.randn(2, 1, 64, 64)
+
+    blk_in, proj_in = [], []
+    handles = [b.register_forward_pre_hook(lambda mod, a: blk_in.append(a[0].detach()))
+               for b in m.blocks]
+    handles += [b.proj.register_forward_pre_hook(lambda mod, a: proj_in.append(a[0].detach()))
+               for b in m.blocks]
+    with torch.no_grad():
+        m(x)
+    for h in handles:
+        h.remove()
+
+    assert len(blk_in) == len(proj_in) == len(m.blocks)
+    for blk, xin, pin in zip(m.blocks, blk_in, proj_in):
+        _, _, v = blk.qkv_heads(blk.n1(xin))                    # (B, heads, T, head_dim)
+        B, T, d = xin.shape
+        z = pin.reshape(B, T, blk.heads, d // blk.heads).transpose(1, 2)  # invert forward's reshape
+        cos = F.cosine_similarity(z, v, dim=-1)
+        assert cos.abs().max().item() < 1e-5, cos.abs().max().item()
+
+
 def test_onnx_export(tmp_path):
     banned = {"Complex", "Loop", "If"}
 
@@ -180,6 +236,15 @@ def test_onnx_export(tmp_path):
     onnx.checker.check_model(det_onnx)
     det_ops = {n.op_type for n in det_onnx.graph.node}
     assert not (det_ops & banned), det_ops & banned
+
+    m_xsa = DetectorNet(240, 320, xsa=True).eval()   # F.normalize/mul/sum/sub are ONNX-standard, confirm rather than assume
+    xsa_path = str(tmp_path / "detector_xsa.onnx")
+    torch.onnx.export(m_xsa, torch.randn(1, 1, 240, 320), xsa_path, opset_version=17,
+                      dynamo=False, input_names=["input"], output_names=["hm", "cls"])
+    xsa_onnx = onnx.load(xsa_path)
+    onnx.checker.check_model(xsa_onnx)
+    xsa_ops = {n.op_type for n in xsa_onnx.graph.node}
+    assert not (xsa_ops & banned), xsa_ops & banned
 
     r = Refiner().eval()
     ref_path = str(tmp_path / "refiner.onnx")

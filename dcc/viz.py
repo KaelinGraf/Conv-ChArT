@@ -9,17 +9,26 @@ _GREEN, _RED, _ORANGE = (0, 200, 0), (0, 0, 220), (0, 140, 255)
 
 
 def draw_overlay(image_u8_gray: np.ndarray, record: dict, meta: dict | None = None,
-                  draw_indices: bool = True) -> np.ndarray:
-    """Corner dots (visible green / invisible red) + index text + hole rects
-    (orange, from meta) over the grayscale image. Returns BGR uint8."""
-    out = cv2.cvtColor(image_u8_gray, cv2.COLOR_GRAY2BGR)
+                  draw_indices: bool = True, filled: bool = True, radius: int = 3,
+                  color_fn=None) -> np.ndarray:
+    """Corner dots (visible green / invisible red, or per color_fn) + index
+    text + hole rects (orange, from meta) over the image. `image_u8_gray` may
+    already be BGR (ndim==3, copied not mutated) as well as grayscale --
+    composable across two calls onto the same canvas, e.g. GT then
+    predictions in one cell (see tools/factor_sweep.py's filmstrip grid).
+    filled/radius pick the marker style (hollow+larger reads as GT,
+    filled+smaller as a prediction); color_fn(corner_dict) -> BGR triple
+    overrides the default visible/invisible green/red when given, for
+    records (like raw predictions) with no "visible" field of their own.
+    Returns BGR uint8."""
+    out = image_u8_gray.copy() if image_u8_gray.ndim == 3 else cv2.cvtColor(image_u8_gray, cv2.COLOR_GRAY2BGR)
     for x0, y0, w, h in (meta or {}).get("holes", []):
         cv2.rectangle(out, (int(round(x0)), int(round(y0))),
                        (int(round(x0 + w)), int(round(y0 + h))), _ORANGE, 1)
     for c in record["corners"]:
         pt = (int(round(c["x"])), int(round(c["y"])))
-        color = _GREEN if c["visible"] else _RED
-        cv2.circle(out, pt, 3, color, -1, lineType=cv2.LINE_AA)
+        color = color_fn(c) if color_fn else (_GREEN if c["visible"] else _RED)
+        cv2.circle(out, pt, radius, color, -1 if filled else 1, lineType=cv2.LINE_AA)
         if draw_indices:
             cv2.putText(out, str(c["index"]), (pt[0] + 5, pt[1] - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)

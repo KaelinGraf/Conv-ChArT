@@ -29,6 +29,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+MIN_CORNERS = 4      # PnP minimum; see _accept_pose
+
 
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__)
@@ -58,14 +60,26 @@ def _accept_pose(rng, i, W, H, s_lo, s_hi, lattice, visible):
         Raxis, _ = cv2.Rodrigues(tilt * np.array([np.cos(psi), np.sin(psi), 0.0]))
         cp, sp = np.cos(phi), np.sin(phi)
         R = np.array([[cp, -sp, 0.0], [sp, cp, 0.0], [0.0, 0.0, 1.0]]) @ Raxis
-        u, v = cx + rng.uniform(-0.35, 0.35) * W, cy + rng.uniform(-0.35, 0.35) * H
+        # +-0.45 matches dcc.synth._sample_affine's own translation range. The old
+        # +-0.35 kept boards further from the frame edge than the training/val
+        # distribution does, so truncated views were under-represented.
+        u, v = cx + rng.uniform(-0.45, 0.45) * W, cy + rng.uniform(-0.45, 0.45) * H
         t = z * (np.linalg.inv(K) @ np.array([u, v, 1.0])) - R @ np.array([2.5, 2.5, 0.0])
 
         cam_z = (lattice @ R.T + t)[:, 2]
         rvec, _ = cv2.Rodrigues(R)
         img_pts = cv2.projectPoints(lattice, rvec, t, K, None)[0].reshape(-1, 2)
         n_in = sum(visible((x, y), [], (W, H)) for x, y in img_pts)
-        if n_in >= 8 and (cam_z > 0).all():
+        # MIN_CORNERS = 4, the PnP minimum -- NOT 8. Requiring 8 silently excluded every
+        # truncated or heavily-occluded view, so the pose set was materially easier than
+        # the data the detectors actually see: measured 69.2% fully-visible and 0.0% with
+        # fewer than 8 corners, against SynthVal's 43.1% and 9.4%. That inflated every
+        # arm's solve rate and flattered the baselines most (Kaelin, 2026-07-29: 'our
+        # other metrics definitely dont show deep charuco solving 96 percent').
+        # 4 is the floor a pose set can legitimately impose -- below it there is no pose
+        # to score, which is a detection failure and belongs in the recall metrics, not
+        # here.
+        if n_in >= MIN_CORNERS and (cam_z > 0).all():
             return K, R, t, s_target, img_pts, tries
     raise RuntimeError(f"image {i}: no acceptable pose within 100 tries -- check scale_range_px / K envelope")
 

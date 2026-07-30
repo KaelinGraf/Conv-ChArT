@@ -146,7 +146,8 @@ def test_border_bypass():
         x5, x12 = input_for_centre(5, r), input_for_centre(12, r)
         mid = input_for_centre(100, r)  # input coord that maps to sensor centre 100, any r
         peaks_input = np.array([[x5, mid], [x12, mid], [mid, x5], [mid, x12]])
-        crops, centres, kept_mask = cut_crops(frame, peaks_input, r)
+        crops, centres, kept_mask, extents = cut_crops(frame, peaks_input, r)
+        assert list(extents) == [24, 24], "default extent must stay the fixed 24 px crop"
         assert list(kept_mask) == [False, True, False, True], f"r={r}"
         assert centres.tolist() == [[12, 100], [100, 12]], f"r={r} centre mismatch"
         assert crops.shape == (2, 1, 24, 24)
@@ -272,7 +273,7 @@ def test_pnp_ippe():
     rng = np.random.default_rng(11)
     K, R, t, img_pts = _build_pose(rng, tilt_deg=30.0, s=60.0)
     idx = np.arange(16)
-    rvec, tvec, rms, ambiguous, n_used, reason = pnp(img_pts, idx, K, square_length_m=1.0)
+    rvec, tvec, rms, ambiguous, n_used, reason, _cov = pnp(img_pts, idx, K, square_length_m=1.0)
     assert reason is None and n_used == 16 and not ambiguous
     R_est, _ = cv2.Rodrigues(rvec)
     ang = np.degrees(np.arccos(np.clip((np.trace(R_est.T @ R) - 1) / 2, -1, 1)))
@@ -292,11 +293,11 @@ def test_pnp_ippe():
     # noise seed is the correct, reproducible way to hit this branch.
     K2, R2, t2, img_pts2 = _build_pose(rng, tilt_deg=0.0, phi=0.3, psi=0.7, s=60.0)
     noisy = img_pts2 + np.random.default_rng(2).normal(0, 0.15, img_pts2.shape)
-    _, _, _, ambiguous2, _, reason2 = pnp(noisy, idx, K2, square_length_m=1.0)
+    _, _, _, ambiguous2, _, reason2, _ = pnp(noisy, idx, K2, square_length_m=1.0)
     assert reason2 is None and ambiguous2 is True
 
     # too few correspondences
-    rvec3, tvec3, rms3, amb3, n3, reason3 = pnp(img_pts[:3], np.array([0, 1, 2]), K, 1.0)
+    rvec3, tvec3, rms3, amb3, n3, reason3, _ = pnp(img_pts[:3], np.array([0, 1, 2]), K, 1.0)
     assert rvec3 is None and tvec3 is None and reason3 is not None and n3 == 3
 
 
@@ -307,7 +308,7 @@ def test_pnp_empty_solver_result(monkeypatch):
     rng = np.random.default_rng(11)
     K, R, t, img_pts = _build_pose(rng, tilt_deg=30.0, s=60.0)
     monkeypatch.setattr(cv2, "solvePnPGeneric", lambda *a, **k: (0, [], [], np.zeros((0, 1))))
-    rvec, tvec, rms, ambiguous, n_used, reason = pnp(img_pts, np.arange(16), K, 1.0)
+    rvec, tvec, rms, ambiguous, n_used, reason, _ = pnp(img_pts, np.arange(16), K, 1.0)
     assert rvec is None and tvec is None and rms is None
     assert ambiguous is False and n_used == 16 and reason == "pnp_solver_failed"
 

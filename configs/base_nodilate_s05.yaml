@@ -1,10 +1,44 @@
-# 640x480 fast-baseline arm (attend_div=8, 4-stage encoder, H/8 attention): the
+# *** CANONICAL BASELINE (Kaelin, 2026-07-30) *** "we have happily taken dilation = false,
+# and sigma = 0.5 as the baseline."
+#
+# THIS FILE IS THE BASE EVERY NEW ARM IS CUT FROM. It is configs/rev640.yaml plus exactly
+# the two adopted keys, verified programmatically (see the invariant check below). It is NOT
+# itself an ablation and has no factor under test.
+#
+#   e4_dilated: false   A-NODILATE finished 50k at M-04 99.01% vs the reference 99.14%
+#                       (inside the +/-0.15 pp noise band), m01 median identical to 4 dp,
+#                       p95 slightly BETTER, for 1,180,672 fewer params (-25.1%). The
+#                       dilated (2,4) pair is vestigial: it was the Rev B spec's board-scale
+#                       context mechanism, which the attention bottleneck now provides.
+#   sigma_hm: 0.5       The sigma ladder settled it on final m01 p95: 2.0 -> 0.8189,
+#                       1.0 -> 0.7366, 0.5 -> 0.7070. Hyperparameter tuning, not a claim.
+#
+# WHY A SEPARATE BASE FILE AT ALL. dcc/dataset.py:18 load_config is a bare yaml.safe_load --
+# there is NO overlay or inheritance, so every arm config is a full ~240-line copy. That is
+# exactly how the 2026-07-29 incident happened: arms cut from a pre-rev-6 base silently
+# differed in 10 keys, conv-only trained on easier data and "beat" the reference, costing an
+# hour of GPU and producing a false architectural finding. Cutting from ONE verified base is
+# the cheap structural fix.
+#
+# INVARIANT, RE-RUN AFTER ANY EDIT TO THIS FILE OR TO rev640.yaml:
+#   env PYTHONPATH= python -c "
+#   import sys; sys.path.insert(0,'.')
+#   from dcc.dataset import load_config
+#   r=load_config('configs/rev640.yaml'); b=load_config('configs/base_nodilate_s05.yaml')
+#   d=sorted(k for k in set(r)|set(b) if r.get(k)!=b.get(k))
+#   assert d==['e4_dilated','sigma_hm'], d"
+#
+# NOTE rev640.yaml OMITS e4_dilated and width_mult and relies on the code defaults
+# (dcc/model.py:325-330: e4_dilated True, width_mult 1.0). This file therefore sets
+# e4_dilated explicitly and leaves width_mult absent, so the key-level diff is exactly the
+# two adopted keys and nothing cosmetic. Arms that vary width set width_mult themselves.
+e4_dilated: false
 # A1/A9 ablation platform, measured 140-142 samples/s vs native's 25.9. scale_range_px
 # below is in INPUT px like default.yaml's, but since input_size differs the physical
 # (sensor-plane) distance envelope it covers differs too -- intentional, this arm is
 # for the resolution-comparison study, not a physical-scale match to the native config.
 input_size: [640, 480]   # (W, H) network input
-sigma_hm: 2.0
+sigma_hm: 0.5
 sigma_cls: 1.0
 alpha: 2
 beta: 4

@@ -36,3 +36,80 @@ tests/test_plot_figures.py
 tests/test_cross_eval.py
 eval_classical/
 factor_sweep*/
+tools/robustness_sweep_dc.py
+tools/filmstrip_lighting.py
+tools/eval_pose_fourway.py
+
+# ---------------------------------------------------------------------------
+# 2026-07-30: keep the PUBLIC tree to the METHOD -- the model, the data
+# generator, the training loops, and the configs of the models we actually
+# ship. Everything below is either bulk output, machine-specific operations,
+# or paper/figure production: real work, but not what someone cloning this
+# repo to use or check the method needs.
+# ---------------------------------------------------------------------------
+
+# bulk artefacts
+audit_rev*/
+logs/
+
+# internal working instructions for the agent, not project documentation
+CLAUDE.md
+
+# OPERATIONS: machine-specific orchestration for this one workstation
+# (queue supervision, boot self-heal, thermal/stall watchdog). Hardcodes
+# absolute paths, core masks and this box's failure history; useless and
+# misleading anywhere else.
+tools/queue_ablations.sh
+tools/launch_composite.sh
+tools/resume_after_boot.sh
+tools/watch_trainers.sh
+tools/wait_trainer_exit.sh
+
+# EVALUATION AND SWEEPS: produce the paper's numbers, not the method
+tools/robustness_sweep.py
+tools/eval_pose_ours.py
+tools/eval_uncertainty.py
+tools/calibrate_uncertainty.py
+tools/refiner_gain.py
+tools/refiner_crop_scale.py
+tools/refiner_err_vs_offset.py
+tools/refiner_id_effect.py
+tools/refiner_failure_gallery.py
+tools/ablation_summary.py
+tools/snr_calibration.py
+tools/working_range.py
+tools/find_attention_frames.py
+tools/attention_head_roles.py
+tools/gate_formula.py
+
+# FIGURE AND DOCUMENT PRODUCTION: renders the deck/paper, not the model
+tools/plot_four_way.py
+tools/plot_ablation.py
+tools/plot_robustness.py
+tools/make_tables.py
+tools/pose_table_pdf.py
+tools/cost_table_pdf.py
+tools/loss_explainer_pdf.py
+tools/loss_target_figure.py
+tools/sample_board.py
+
+# ABLATION CONFIGS: the experiment record, not the shipped models. The two
+# models this repo ships (Conv-ChArT, Conv-ChArT-FAST), their XSA variants,
+# and the baseline they were cut from ARE tracked -- see configs/.
+configs/abl_beta0.yaml
+configs/abl_ce.yaml
+configs/abl_composite_s05.yaml
+configs/abl_composite_s1.yaml
+configs/abl_convonly.yaml
+configs/abl_gates_off.yaml
+configs/abl_nodilate.yaml
+configs/abl_nodilate_width_half_s1.yaml
+configs/abl_sigma05.yaml
+configs/abl_sigma1.yaml
+configs/abl_width_half.yaml
+configs/abl_xsa.yaml
+configs/abl_xsa_nodilate.yaml
+
+# figures/ is DELIBERATELY NOT IGNORED: paper/ is, so the conference
+# deliverables (headline panel, pose table, cost table, architecture) are
+# copied there to be pullable without the 295 MB of paper working files.

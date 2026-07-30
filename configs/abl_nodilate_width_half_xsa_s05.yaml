@@ -1,10 +1,42 @@
+# *** HEADLINE CANDIDATE (Kaelin 2026-07-30) *** whichever of this arm and its
+# xsa/non-xsa counterpart wins becomes the CONFERENCE HEADLINE MODEL, replacing
+# runs/rev640_160k_rev6/ckpt_0160000.pt in every figure. The regeneration checklist --
+# 3x3 robustness panel, architecture SVG, introspection, darkness filmstrip, pose
+# table, cost report -- is paper/conference/00_PENDING_HEADLINE_SWAP.md. Do not swap
+# one figure without doing all of them.
+e4_dilated: false
+width_mult: 0.5
+# A-NODILATE+WIDTH_HALF+XSA (sigma_hm 0.5). FOUR keys vs configs/rev640.yaml
+# (e4_dilated, width_mult, sigma_hm, xsa); only xsa is the VARIABLE. The other three are
+# the established baseline: nodilate is the norm (Kaelin 2026-07-30), sigma 0.5 won the
+# ladder, width_half is the arm this is compared against.
+#
+# THE HYPOTHESIS, Kaelin's, stated before the result: "with the full model (with dilation,
+# and full attention + conv), it is quite likely that we have so much representational
+# capacity that something like xsa just does not matter. What my hypothesis is, is that
+# when attention capacity and representational expressiveness becomes actually parameter
+# limited, XSA may earn its keep."
+#
+# Supporting evidence gathered 2026-07-30, BEFORE this arm ran:
+#   * XSA at FULL width measured null twice -- A-XSA alone (all regimes within +/-0.8 pp)
+#     and A-XSA+NODILATE (p95 0.8148 vs nodilate-alone 0.8086 at matched step 30k, i.e.
+#     slightly WORSE). Consistent with "nothing binds at full capacity".
+#   * The width-half arm's bottleneck entropy is 6.55/6.60 nats at 5k/7.5k versus
+#     nodilate-at-full-width's 5.86/6.04 -- its attention is measurably LESS concentrated
+#     despite also having no dilation. That is the first quantitative sign d=128 is
+#     genuinely capacity-limited, which is exactly the condition the hypothesis names.
+#   * XSA is PARAMETER-FREE: it changes how attention normalises, not how much capacity it
+#     has. Identical param count to abl_nodilate_width_half_s05 (882,402), so any delta is
+#     attributable to the normalisation alone -- no confound.
+#
+# Control: abl_nodilate_width_half_s05_50k_rev6 (same four keys minus xsa).
 # 640x480 fast-baseline arm (attend_div=8, 4-stage encoder, H/8 attention): the
 # A1/A9 ablation platform, measured 140-142 samples/s vs native's 25.9. scale_range_px
 # below is in INPUT px like default.yaml's, but since input_size differs the physical
 # (sensor-plane) distance envelope it covers differs too -- intentional, this arm is
 # for the resolution-comparison study, not a physical-scale match to the native config.
 input_size: [640, 480]   # (W, H) network input
-sigma_hm: 2.0
+sigma_hm: 0.5
 sigma_cls: 1.0
 alpha: 2
 beta: 4
@@ -20,7 +52,7 @@ attend_div: 8                   # 4-stage encoder, attention at H/8 (see dcc/mod
 attn_blocks: 2                  # MHSA+MLP at bottleneck (MT-01)
 attn_heads: 8
 rope_lambda_min_cells: 2.5       # replaces MT-06's rope_base: standard-RoPE base can't reach the spec's own 2-cell short end at a useful long end; wavelength-anchoring can (nudged 2->2.5 to clear the Nyquist degeneracy), signed off 2026-07-27
-xsa: false                       # exclusive self-attention at the bottleneck (Zhai, arXiv:2603.09078); default off, see paper/xsa_value_correlation.md and ablations.md A14
+xsa: true                       # exclusive self-attention at the bottleneck (Zhai, arXiv:2603.09078); default off, see paper/xsa_value_correlation.md and ablations.md A14
 board:
   squares: [5, 5]
   dictionary: DICT_5X5_50

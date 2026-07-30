@@ -1,10 +1,57 @@
+# *** HEADLINE CANDIDATE (Kaelin 2026-07-30) *** whichever of this arm and its
+# xsa/non-xsa counterpart wins becomes the CONFERENCE HEADLINE MODEL, replacing
+# runs/rev640_160k_rev6/ckpt_0160000.pt in every figure. The regeneration checklist --
+# 3x3 robustness panel, architecture SVG, introspection, darkness filmstrip, pose
+# table, cost report -- is paper/conference/00_PENDING_HEADLINE_SWAP.md. Do not swap
+# one figure without doing all of them.
+e4_dilated: false
+width_mult: 0.5
+# ABLATION A-NODILATE+WIDTH_HALF (sigma_hm 0.5). THREE keys vs configs/rev640.yaml
+# (e4_dilated, width_mult, sigma_hm) but only TWO are variables -- see below. All three are
+# already supported by dcc/model.py and dcc/targets.py; no code change.
+#
+# Kaelin 2026-07-30: "nodilate should be the norm from now on (whenever attention is
+# present). The existing ablation proves the dilation is a waste of parameters." A-NODILATE
+# finished 50k at M-04 99.01% vs the reference 99.14% (inside the +/-0.15 pp noise band),
+# m01 median identical to 4 dp, p95 slightly BETTER, for 1,180,672 fewer params (-25.1%).
+# So e4_dilated=false is the BASELINE ASSUMPTION here, not a factor under test.
+#
+# sigma_hm=0.5 likewise: "sigma is hyperparameter tuning, and we will have a
+# sigma = 0.5/1.0 baseline to compare to regardless". The sigma ladder gives a
+# full-width same-sigma control, so carrying the tuned sigma costs no attribution.
+#
+# THE ONE FACTOR UNDER TEST is width_mult 0.5 -- how small can this get before accuracy
+# breaks.
+#
+# MEASURED before launch, on the live module:
+#   reference             4,698,034 params   60.18 GMACs
+#   nodilate              3,517,362 (-25.1%) 54.52
+#   THIS ARM                882,402 (-81.2%) 13.66   -- 5.3x smaller, 4.4x fewer MACs
+#                                                       ~27 GFLOPs/frame, >200 fps Orin fp16
+#
+# *** ATTRIBUTION LIMIT, READ BEFORE INTERPRETING A LOSS ***
+# width_mult scales conv channels AND the attention dim together: dcc/model.py:213 does
+# `d = c(d)`, so d 256 -> 128 (head dim 16) and attention params fall -74.9%
+# (1,580,032 -> 396,800). If this arm degrades, NO CURRENTLY BUILDABLE ARM separates
+# "attention got too narrow" from "the conv trunk got too thin" -- abl_width_half.yaml has
+# the same coupling. Decoupling needs a small model.py change (an attention-width multiplier
+# independent of width_mult) so d can stay 256 while conv channels halve. Do not attribute a
+# loss to either cause without that arm.
+#
+# DELIBERATELY DEFERRED (Kaelin 2026-07-30): "i dont think we need to bother anyway with
+# the really thorough attribution just yet, if it turns out to be a very strong result we
+# can consider it." So the decoupling arm is NOT queued. If this arm loses and the
+# narrowed attention is the suspect, the back-pocket lever is XSA on top -- parameter-free,
+# and it produced the largest attention-concentration effect of any arm (bottleneck entropy
+# 4.96 nats vs the reference's ~7.0). See
+# paper/results_rev6/08_ablations/00_BACK_POCKET_deferred_arms.md.
 # 640x480 fast-baseline arm (attend_div=8, 4-stage encoder, H/8 attention): the
 # A1/A9 ablation platform, measured 140-142 samples/s vs native's 25.9. scale_range_px
 # below is in INPUT px like default.yaml's, but since input_size differs the physical
 # (sensor-plane) distance envelope it covers differs too -- intentional, this arm is
 # for the resolution-comparison study, not a physical-scale match to the native config.
 input_size: [640, 480]   # (W, H) network input
-sigma_hm: 2.0
+sigma_hm: 0.5
 sigma_cls: 1.0
 alpha: 2
 beta: 4

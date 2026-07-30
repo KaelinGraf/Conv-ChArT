@@ -113,3 +113,9 @@ configs/abl_xsa_nodilate.yaml
 # figures/ is DELIBERATELY NOT IGNORED: paper/ is, so the conference
 # deliverables (headline panel, pose table, cost table, architecture) are
 # copied there to be pullable without the 295 MB of paper working files.
+
+# figures/ removed from the public release (Kaelin, 2026-07-30). Conference
+# deliverables stay local; they were purged from history, not just deleted, so
+# they are not retrievable from an earlier commit either. Ignored here so a
+# later `git add -A` cannot quietly put them back.
+figures/

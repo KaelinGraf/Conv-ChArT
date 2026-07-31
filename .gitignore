@@ -68,18 +68,12 @@ tools/loss_explainer_pdf.py
 tools/loss_target_figure.py
 tools/sample_board.py
 
-configs/abl_beta0.yaml
-configs/abl_ce.yaml
-configs/abl_composite_s05.yaml
-configs/abl_composite_s1.yaml
-configs/abl_convonly.yaml
-configs/abl_gates_off.yaml
-configs/abl_nodilate.yaml
-configs/abl_nodilate_width_half_s1.yaml
-configs/abl_sigma05.yaml
-configs/abl_sigma1.yaml
-configs/abl_width_half.yaml
-configs/abl_xsa.yaml
-configs/abl_xsa_nodilate.yaml
+configs/abl_*.yaml
+!configs/abl_nodilate_width_half_s05.yaml
+!configs/abl_nodilate_width_half_xsa_s05.yaml
+!configs/abl_nodilate_width_quarter_s05.yaml
+!configs/abl_nodilate_width_quarter_xsa_s05.yaml
+
+tools/cut_ablation.py
 
 figures/

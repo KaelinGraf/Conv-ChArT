@@ -96,19 +96,19 @@ tools/sample_board.py
 # ABLATION CONFIGS: the experiment record, not the shipped models. The two
 # models this repo ships (Conv-ChArT, Conv-ChArT-FAST), their XSA variants,
 # and the baseline they were cut from ARE tracked -- see configs/.
-configs/abl_beta0.yaml
-configs/abl_ce.yaml
-configs/abl_composite_s05.yaml
-configs/abl_composite_s1.yaml
-configs/abl_convonly.yaml
-configs/abl_gates_off.yaml
-configs/abl_nodilate.yaml
-configs/abl_nodilate_width_half_s1.yaml
-configs/abl_sigma05.yaml
-configs/abl_sigma1.yaml
-configs/abl_width_half.yaml
-configs/abl_xsa.yaml
-configs/abl_xsa_nodilate.yaml
+#
+# GLOB + EXPLICIT EXCEPTIONS, replacing the hand-maintained deny-list (2026-07-31). The campaign
+# now generates arms continuously via tools/cut_ablation.py, and a deny-list silently leaks every
+# arm nobody remembered to add. Default-deny with named exceptions is the only version that stays
+# correct as arms accumulate: to SHIP a config, name it below; everything else is experiment record.
+configs/abl_*.yaml
+!configs/abl_nodilate_width_half_s05.yaml
+!configs/abl_nodilate_width_half_xsa_s05.yaml
+!configs/abl_nodilate_width_quarter_s05.yaml
+!configs/abl_nodilate_width_quarter_xsa_s05.yaml
+
+# ABLATION TOOLING: cuts and verifies experiment configs. Useless once the arms are chosen.
+tools/cut_ablation.py
 
 # figures/ is DELIBERATELY NOT IGNORED: paper/ is, so the conference
 # deliverables (headline panel, pose table, cost table, architecture) are

@@ -210,6 +210,12 @@ class DetectorNet(nn.Module):
         return self.hm(y), cls
 
 
+def refiner_for(state_dict):
+    """Build a Refiner whose width MATCHES a checkpoint, inferred from the weights themselves."""
+    c32 = state_dict["body.0.0.weight"].shape[0]
+    return Refiner(width_mult=c32 / 32.0)
+
+
 def detector_kwargs(cfg):
     """DetectorNet's config-tunable constructor kwargs (attend_div, n_blocks, heads,
     rope_lambda_min, xsa), read from a loaded cfg dict with the exact same defaults
@@ -229,11 +235,16 @@ def detector_kwargs(cfg):
 class Refiner(nn.Module):
     """Sub-pixel refiner."""
 
-    def __init__(self):
+    def __init__(self, width_mult=1.0):
+        """width_mult scales the BODY channels only (Kaelin 2026-07-31: "you can change the refiner
+        if you want too/optimise it").
+        """
         super().__init__()
-        self.body = nn.Sequential(conv_bn_relu(1, 32), conv_bn_relu(32, 64), conv_bn_relu(64, 64))
-        self.post = conv_bn_relu(64, 64)
-        self.out = nn.Conv2d(64, 64, 1)
+        c = lambda n: max(8, int(round(n * width_mult / 8)) * 8)
+        self.body = nn.Sequential(conv_bn_relu(1, c(32)), conv_bn_relu(c(32), c(64)),
+                                  conv_bn_relu(c(64), c(64)))
+        self.post = conv_bn_relu(c(64), c(64))
+        self.out = nn.Conv2d(c(64), 64, 1)
         self.ps = nn.PixelShuffle(8)
         nn.init.constant_(self.out.bias, -2.19)
 

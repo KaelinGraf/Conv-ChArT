@@ -25,15 +25,26 @@ def strict_bce(logits, y):
 
 
 def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_form="focal",
-                   beta=4):
+                   beta=4, alpha=2, loss_form_hm=None, loss_form_cls=None):
     """Batch-normalised by total visible corners, shared N for both heads; clamped so N=0 batches
     (all-negative, no visible corners) divide by 1 instead of by zero. loss_form="ce" swaps BOTH
     heads to strict_bce (A-CE).
     """
     n = max(float(n_vis_batch), 1.0)
-    if loss_form == "ce":
-        return (strict_bce(hm_logit, hm_t) + lam * strict_bce(cls_logit, cls_t)) / n
-    return (focal(hm_logit, hm_t, beta=beta) + lam * focal(cls_logit, cls_t, beta=beta)) / n
+    hm_form = loss_form_hm or loss_form
+    cls_form = loss_form_cls or loss_form
+    head = lambda logit, target, form: (strict_bce(logit, target) if form == "ce"
+                                        else focal(logit, target, alpha=alpha, beta=beta))
+    return (head(hm_logit, hm_t, hm_form) + lam * head(cls_logit, cls_t, cls_form)) / n
+
+
+def loss_kwargs(cfg):
+    """Resolve detector_loss's form/alpha/beta from a config, in ONE place."""
+    return {"loss_form": cfg.get("loss_form", "focal"),
+            "loss_form_hm": cfg.get("loss_form_hm"),
+            "loss_form_cls": cfg.get("loss_form_cls"),
+            "beta": cfg.get("focal_beta", cfg.get("beta", 4)),
+            "alpha": cfg.get("alpha", 2)}
 
 
 def refiner_loss(logits, targets):

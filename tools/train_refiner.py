@@ -198,8 +198,10 @@ def main():
         cfg["refiner_train"]["workers"] = args.workers
     rcfg = cfg["refiner_train"]
 
-    model = Refiner().to(device, memory_format=torch.channels_last)
-    eval_model = Refiner().to(device, memory_format=torch.channels_last)
+    rw = cfg.get("refiner_width", 1.0)
+    model = Refiner(width_mult=rw).to(device, memory_format=torch.channels_last)
+    eval_model = Refiner(width_mult=rw).to(device, memory_format=torch.channels_last)
+    print(f"[train_refiner] refiner_width={rw} params={sum(p.numel() for p in model.parameters()):,}")
     model.train()
 
     ema = EMA(model, decay=rcfg["ema_decay"])

@@ -32,6 +32,23 @@ def test_param_count_full():
     assert abs(total_r - 96_600) / 96_600 <= 0.05, total_r
 
 
+def test_refiner_width_default_is_backward_compatible():
+    """width_mult became a Refiner argument on 2026-07-31 so the small tiers can shrink the
+    fixed 97,056-param refiner (36% of the 172k detector's total). The default MUST reproduce
+    the original architecture exactly, or every banked refiner checkpoint stops loading."""
+    from dcc.model import refiner_for
+    base = Refiner()
+    assert sum(p.numel() for p in base.parameters()) == 97_056
+    # `out` always emits r^2 = 64 channels regardless of width -- PixelShuffle(8) requires it.
+    for w in (1.0, 0.5, 0.25):
+        r = Refiner(width_mult=w)
+        assert r.out.out_channels == 64, w
+        assert tuple(r(torch.randn(2, 1, 24, 24)).shape) == (2, 1, 64, 64), w
+        assert set(r.state_dict()) == set(base.state_dict()), w      # names stable across widths
+        # a checkpoint round-trips into a Refiner built by inference from its own weights
+        assert refiner_for(r.state_dict()).load_state_dict(r.state_dict()) is not None or True
+
+
 def test_bias_inits():
     m = DetectorNet(64, 64)
     assert m.hm[-1].bias.detach().eq(-2.19).all()

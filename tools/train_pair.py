@@ -97,7 +97,7 @@ def main():
     import train_detector as td
     from dcc.board import n_corners
     from dcc.dataset import SynthStream, SynthVal, load_config
-    from dcc.losses import detector_loss
+    from dcc.losses import detector_loss, loss_kwargs
     from dcc.model import DetectorNet, detector_kwargs
     from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, save_ckpt
 
@@ -197,8 +197,7 @@ def main():
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 hm_logits, cls_logits = a["model"](images)
                 loss = detector_loss(hm_logits, cls_logits, hms, cts, nvis_sum, cfg["lambda_cls"],
-                                     loss_form=cfg.get("loss_form", "focal"),
-                                     beta=cfg.get("focal_beta", 4)) / accum
+                                     **loss_kwargs(cfg)) / accum
             loss.backward()
             a["accum_loss"] += float(loss.detach()) * accum
             a["micro"] += 1

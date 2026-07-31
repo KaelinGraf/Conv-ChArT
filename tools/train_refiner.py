@@ -205,8 +205,13 @@ def main():
         cfg["refiner_train"]["workers"] = args.workers
     rcfg = cfg["refiner_train"]
 
-    model = Refiner().to(device, memory_format=torch.channels_last)
-    eval_model = Refiner().to(device, memory_format=torch.channels_last)
+    # refiner_width (default 1.0 = the shipped 97,056-param architecture, bit-identical) is the
+    # size lever for the small tiers, where the fixed refiner dominates: 11% of Conv-ChArT's
+    # total but 36% of the 172k detector's. Read from the config so an arm is a one-key cut.
+    rw = cfg.get("refiner_width", 1.0)
+    model = Refiner(width_mult=rw).to(device, memory_format=torch.channels_last)
+    eval_model = Refiner(width_mult=rw).to(device, memory_format=torch.channels_last)
+    print(f"[train_refiner] refiner_width={rw} params={sum(p.numel() for p in model.parameters()):,}")
     model.train()
 
     ema = EMA(model, decay=rcfg["ema_decay"])

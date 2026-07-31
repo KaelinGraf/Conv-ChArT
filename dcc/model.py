@@ -314,6 +314,22 @@ class DetectorNet(nn.Module):
         return self.hm(y), cls
 
 
+def refiner_for(state_dict):
+    """Build a Refiner whose width MATCHES a checkpoint, inferred from the weights themselves.
+
+    Twelve tools construct `Refiner()` bare, which is width 1.0. Once `refiner_width` became a
+    config lever (2026-07-31) a narrow checkpoint would fail to load into any of them with a
+    shape error. Rather than thread a width argument through every call site for a tier that may
+    never be adopted, this reads the first conv's out-channels -- body.0.0.weight is (c(32),1,3,3)
+    -- and recovers the multiplier. Width 1.0 checkpoints are unaffected.
+
+    Adoption follow-up, stated rather than silently deferred: if a narrow refiner IS adopted,
+    every `Refiner()` call site listed by `grep -n "Refiner("` must move to this helper, or they
+    will silently keep building the 97,056-param version."""
+    c32 = state_dict["body.0.0.weight"].shape[0]
+    return Refiner(width_mult=c32 / 32.0)
+
+
 def detector_kwargs(cfg):
     """DetectorNet's config-tunable constructor kwargs (attend_div, n_blocks,
     heads, rope_lambda_min, xsa), read from a loaded cfg dict with the exact
@@ -347,11 +363,23 @@ class Refiner(nn.Module):
     sensor-frame crop in the same (row=y, col=x) order images always use;
     that crop is the pipeline's responsibility, not this module's."""
 
-    def __init__(self):
+    def __init__(self, width_mult=1.0):
+        """width_mult scales the BODY channels only (Kaelin 2026-07-31: "you can change the
+        refiner if you want too/optimise it"). It exists because the refiner is a FIXED 97,056
+        params shared by every detector tier, so as the detector shrinks the refiner becomes the
+        dominant cost -- 11% of Conv-ChArT but 36% of the 172k tier. The two 64->64 convs
+        (body.2 and post) are 73,728 of the 97,056, i.e. 76%, so width is the lever that matters.
+
+        `out` ALWAYS emits exactly 64 channels: PixelShuffle(8) requires r^2 = 64, so that count
+        is fixed by the 8x upsample, not by width. Only its INPUT scales. Default 1.0 reproduces
+        the original architecture parameter-for-parameter, so existing refiner checkpoints load
+        unchanged -- asserted in tests/test_model.py."""
         super().__init__()
-        self.body = nn.Sequential(conv_bn_relu(1, 32), conv_bn_relu(32, 64), conv_bn_relu(64, 64))
-        self.post = conv_bn_relu(64, 64)
-        self.out = nn.Conv2d(64, 64, 1)
+        c = lambda n: max(8, int(round(n * width_mult / 8)) * 8)   # keep channels 8-divisible
+        self.body = nn.Sequential(conv_bn_relu(1, c(32)), conv_bn_relu(c(32), c(64)),
+                                  conv_bn_relu(c(64), c(64)))
+        self.post = conv_bn_relu(c(64), c(64))
+        self.out = nn.Conv2d(c(64), 64, 1)
         self.ps = nn.PixelShuffle(8)
         nn.init.constant_(self.out.bias, -2.19)
 

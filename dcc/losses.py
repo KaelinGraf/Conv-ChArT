@@ -33,7 +33,7 @@ def strict_bce(logits, y):
 
 
 def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_form="focal",
-                   beta=4):
+                   beta=4, alpha=2, loss_form_hm=None, loss_form_cls=None):
     """Batch-normalised by total visible corners, shared N for both heads;
     clamped so N=0 batches (all-negative, no visible corners) divide by 1
     instead of by zero. loss_form="ce" swaps BOTH heads to strict_bce (A-CE).
@@ -48,11 +48,44 @@ def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_f
     novel claim. beta=0 makes (1-y)^0 == 1 for every cell, so all negatives take
     full penalty regardless of proximity: the Gaussian grading is gone while the
     imbalance fix stays. THAT is the clean one-key isolation of the claim, and
-    unlike A-CE it still trains, so the learning curves are comparable."""
+    unlike A-CE it still trains, so the learning curves are comparable.
+
+    alpha is threaded through for the same reason beta is: configs/*.yaml all declare
+    top-level `alpha: 2` and `beta: 4`, but until 2026-07-30 NOTHING in training read
+    either -- the live lever was the separately-named `focal_beta`, and `alpha`/`beta`
+    were read only by tools/loss_explainer_pdf.py, i.e. by the FIGURE. Every config
+    carried alpha=2/beta=4, exactly focal()'s defaults, so no run was ever mis-trained;
+    but `--set beta=0` would have silently no-opped, and a hand-edit of `beta` would have
+    produced a slide describing a loss the model was not trained with. Callers now resolve
+    focal_beta -> beta -> 4 so the config keys are live and the figure cannot drift.
+
+    PER-HEAD FORMS (2026-07-31). loss_form_hm / loss_form_cls override loss_form for one head
+    each, because the campaign measured the two heads to be driven by DIFFERENT mechanisms:
+    beta=0 (Gaussian grading removed, focal's alpha kept) captured 77% of A-CE's localisation
+    gain but only 8.5% of its identity gain. So the penalty discount governs the HEATMAP and the
+    focal->BCE switch -- which also drops alpha's easy-negative modulation on the CLASS head --
+    governs IDENTITY. Switching both heads together, as loss_form alone does, cannot separate
+    them or take the better of each. Default None keeps the old single-lever behaviour exactly."""
     n = max(float(n_vis_batch), 1.0)
-    if loss_form == "ce":
-        return (strict_bce(hm_logit, hm_t) + lam * strict_bce(cls_logit, cls_t)) / n
-    return (focal(hm_logit, hm_t, beta=beta) + lam * focal(cls_logit, cls_t, beta=beta)) / n
+    hm_form = loss_form_hm or loss_form
+    cls_form = loss_form_cls or loss_form
+    head = lambda logit, target, form: (strict_bce(logit, target) if form == "ce"
+                                        else focal(logit, target, alpha=alpha, beta=beta))
+    return (head(hm_logit, hm_t, hm_form) + lam * head(cls_logit, cls_t, cls_form)) / n
+
+
+def loss_kwargs(cfg):
+    """Resolve detector_loss's form/alpha/beta from a config, in ONE place.
+
+    Three trainer call sites (train_detector's train and val loops, train_pair's loop) all
+    need the identical resolution, and the `focal_beta` vs `beta` precedence is the kind of
+    detail that drifts when it is written out three times. Precedence is
+    focal_beta -> beta -> default, so an arm cut with either key name is live."""
+    return {"loss_form": cfg.get("loss_form", "focal"),
+            "loss_form_hm": cfg.get("loss_form_hm"),
+            "loss_form_cls": cfg.get("loss_form_cls"),
+            "beta": cfg.get("focal_beta", cfg.get("beta", 4)),
+            "alpha": cfg.get("alpha", 2)}
 
 
 def refiner_loss(logits, targets):

@@ -356,7 +356,7 @@ def run_validation(model, loader, cfg, device, tau_hm, match_px, preview_dir=Non
     import numpy as np
     import torch
     from dcc import viz
-    from dcc.losses import detector_loss
+    from dcc.losses import detector_loss, loss_kwargs
     from dcc.pipeline import merge_close, peaks
 
     try:
@@ -393,7 +393,7 @@ def run_validation(model, loader, cfg, device, tau_hm, match_px, preview_dir=Non
                 # in its body) -- sum the per-sample counts, don't pass the
                 # (B,) batch tensor.
                 loss = detector_loss(hm_logits, cls_logits, hms_d, cts_d, nvis_d.sum(), cfg["lambda_cls"],
-                                      loss_form=cfg.get("loss_form", "focal"), beta=cfg.get("focal_beta", 4))
+                                      **loss_kwargs(cfg))
             loss_sum += float(loss) * images.shape[0]
             loss_n += images.shape[0]
 
@@ -481,7 +481,7 @@ def main():
 
     from dcc.board import n_corners
     from dcc.dataset import SynthStream, SynthVal, load_config
-    from dcc.losses import detector_loss  # noqa: F401 -- imported here so a missing dcc.losses fails fast
+    from dcc.losses import detector_loss, loss_kwargs  # noqa: F401 -- imported here so a missing dcc.losses fails fast
     from dcc.model import DetectorNet, detector_kwargs
     from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, load_retarget_ckpt, param_groups, save_ckpt
 
@@ -587,7 +587,7 @@ def main():
         with torch.autocast("cuda", dtype=torch.bfloat16):
             hm_logits, cls_logits = model(images)
             loss = detector_loss(hm_logits, cls_logits, hms, cts, nvis.sum(), cfg["lambda_cls"],
-                                  loss_form=cfg.get("loss_form", "focal"), beta=cfg.get("focal_beta", 4)) / accum
+                                  **loss_kwargs(cfg)) / accum
         loss.backward()
         accum_loss += float(loss.detach()) * accum
         micro += 1

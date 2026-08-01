@@ -176,6 +176,11 @@ class DetectorNet(nn.Module):
         else:
             self.gate3 = AttnGate(c(128), c(256), c(64))
             self.d3 = conv_bn_relu(c(256) + c(128), c(128))
+        want = set(gates) if isinstance(gates, (list, tuple, set)) else set()
+        if 2 in want:
+            self.gate2 = AttnGate(c(64), c(128), c(32))
+        if 1 in want:
+            self.gate1 = AttnGate(c(32), c(64), c(16))
         self.d2 = conv_bn_relu(c(128) + c(64), c(64))
         self.d1 = conv_bn_relu(c(64) + c(32), c(32))
         self.hm = nn.Sequential(nn.Conv2d(c(32), c(32), 3, padding=1), nn.ReLU(inplace=True),
@@ -205,8 +210,10 @@ class DetectorNet(nn.Module):
         else:
             y = self.d3(torch.cat([up2(z), self.gate3(s3, z) if self.gates_on else s3], 1))
         cls = self.cls(y)
-        y = self.d2(torch.cat([up2(y), s2], 1))
-        y = self.d1(torch.cat([up2(y), s1], 1))
+        g2 = self.gate2(s2, y) if (self.gates_on and hasattr(self, "gate2")) else s2
+        y = self.d2(torch.cat([up2(y), g2], 1))
+        g1 = self.gate1(s1, y) if (self.gates_on and hasattr(self, "gate1")) else s1
+        y = self.d1(torch.cat([up2(y), g1], 1))
         return self.hm(y), cls
 
 
@@ -227,7 +234,8 @@ def detector_kwargs(cfg):
     return {"attend_div": cfg.get("attend_div", 16), "n_blocks": cfg.get("attn_blocks", 2),
             "heads": cfg.get("attn_heads", 8), "rope_lambda_min": cfg.get("rope_lambda_min_cells", 2.5),
             "xsa": cfg.get("xsa", False),
-            "gates": cfg.get("gates_enabled", True),
+            "gates": (False if cfg.get("gates_enabled", True) is False
+                      else cfg.get("gate_skips", True)),
             "width_mult": cfg.get("width_mult", 1.0),
             "e4_dilated": cfg.get("e4_dilated", True)}
 

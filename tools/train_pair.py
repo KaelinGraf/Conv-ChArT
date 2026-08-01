@@ -70,11 +70,17 @@ def shared_signature(cfg):
     model/optimiser keys (width_mult, xsa, e4_dilated, lr...) but must agree here, or one of
     them would silently train on the other's data convention. sigma_hm/sigma_cls are in the
     list because the worker renders TARGETS, not just images -- differing sigma is the one
-    plausible mismatch that would still 'work' and quietly poison an arm."""
+    plausible mismatch that would still 'work' and quietly poison an arm.
+
+    lambda_cls was REMOVED from this list on 2026-08-01. It is a LOSS WEIGHT, applied only at
+    detector_loss's three call sites (`grep -n lambda_cls dcc/ tools/train_*.py` finds nothing on
+    the data path), so it cannot change what a worker emits. Including it forced a lambda sweep --
+    an axis never once ablated -- to run serially, one arm per loader, when four arms could share
+    one. The constraint here must be exactly "what the loader emits", or it silently taxes the
+    experiments it was written to protect."""
     t = cfg["train"]
     return {"input_size": cfg["input_size"], "board": cfg.get("board"),
             "sigma_hm": cfg.get("sigma_hm"), "sigma_cls": cfg.get("sigma_cls"),
-            "lambda_cls": cfg.get("lambda_cls"),
             "batch": t["batch"], "accum": t["accum"],
             "val_every": t["val_every"], "full_val_every": t["full_val_every"],
             "val_subset": t["val_subset"], "synth": cfg["synth"]}

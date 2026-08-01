@@ -280,6 +280,24 @@ class DetectorNet(nn.Module):
         else:
             self.gate3 = AttnGate(c(128), c(256), c(64))      # gates enc3 (H/4) skip w/ bottleneck z (H/8 is the bottleneck here)
             self.d3 = conv_bn_relu(c(256) + c(128), c(128))   # H/8  -> H/4
+        # SHALLOW GATES (Kaelin 2026-08-01: "could we try adding gates on all 3 for the small
+        # model to see if that helps?"). The 640 variant has THREE skips -- s3 (H/4, gated),
+        # s2 (H/2) and s1 (H) -- and only the deepest was ever gated, on the spec's argument that
+        # a wrong veto is recoverable at H/4 (the lattice recovery pass can undo it) but not in
+        # the shallow layers that carry sub-pixel position. The gates-off ladder is the evidence
+        # that overturns that for SMALL models: removing gate3 is mildly BENEFICIAL at 882k/502k
+        # (-0.002/-0.006 px p95, +0.20/+0.25 pp M-04) but costs -15 pp M-04 at 222k, i.e. the gate
+        # is load-bearing exactly where capacity is scarce. If one gate helps there, more may.
+        #
+        # `gates` accepts a LIST of skip indices to gate; True/False keep the previous meaning
+        # exactly (deepest skip only / bypass) and, critically, leave gate3's state_dict key
+        # untouched so every banked checkpoint still loads. Only the requested extra gates are
+        # constructed, so an ungated tier carries no dead parameters.
+        want = set(gates) if isinstance(gates, (list, tuple, set)) else set()
+        if 2 in want:
+            self.gate2 = AttnGate(c(64), c(128), c(32))    # gates enc2 (H/2) skip w/ d3's output
+        if 1 in want:
+            self.gate1 = AttnGate(c(32), c(64), c(16))     # gates enc1 (H)   skip w/ d2's output
         self.d2 = conv_bn_relu(c(128) + c(64), c(64))     # H/4  -> H/2
         self.d1 = conv_bn_relu(c(64) + c(32), c(32))      # H/2  -> H
         self.hm = nn.Sequential(nn.Conv2d(c(32), c(32), 3, padding=1), nn.ReLU(inplace=True),
@@ -309,8 +327,12 @@ class DetectorNet(nn.Module):
         else:
             y = self.d3(torch.cat([up2(z), self.gate3(s3, z) if self.gates_on else s3], 1))   # H/4
         cls = self.cls(y)                       # class head taps the H/4 rung
-        y = self.d2(torch.cat([up2(y), s2], 1))                  # H/2, ungated skip
-        y = self.d1(torch.cat([up2(y), s1], 1))                  # H,  ungated skip
+        # Shallow skips: gated only when `gates` named them (see __init__). hasattr rather than a
+        # flag so a model built without them carries no branch state and no unused parameters.
+        g2 = self.gate2(s2, y) if (self.gates_on and hasattr(self, "gate2")) else s2
+        y = self.d2(torch.cat([up2(y), g2], 1))                  # H/2
+        g1 = self.gate1(s1, y) if (self.gates_on and hasattr(self, "gate1")) else s1
+        y = self.d1(torch.cat([up2(y), g1], 1))                  # H
         return self.hm(y), cls
 
 
@@ -341,7 +363,12 @@ def detector_kwargs(cfg):
     return {"attend_div": cfg.get("attend_div", 16), "n_blocks": cfg.get("attn_blocks", 2),
             "heads": cfg.get("attn_heads", 8), "rope_lambda_min": cfg.get("rope_lambda_min_cells", 2.5),
             "xsa": cfg.get("xsa", False),
-            "gates": cfg.get("gates_enabled", True),
+            # gates: False disables; a `gate_skips` list names WHICH skips to gate (3 = H/4, the
+            # only one gated historically; 2 = H/2; 1 = H). Absent -> True -> deepest only, which
+            # is the previous behaviour bit-for-bit. gates_enabled=False wins over gate_skips so
+            # the ablation switch cannot be silently overridden by a stale list.
+            "gates": (False if cfg.get("gates_enabled", True) is False
+                      else cfg.get("gate_skips", True)),
             "width_mult": cfg.get("width_mult", 1.0),
             "e4_dilated": cfg.get("e4_dilated", True)}
 

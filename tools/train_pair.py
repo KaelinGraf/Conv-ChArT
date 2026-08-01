@@ -67,7 +67,6 @@ def shared_signature(cfg):
     t = cfg["train"]
     return {"input_size": cfg["input_size"], "board": cfg.get("board"),
             "sigma_hm": cfg.get("sigma_hm"), "sigma_cls": cfg.get("sigma_cls"),
-            "lambda_cls": cfg.get("lambda_cls"),
             "batch": t["batch"], "accum": t["accum"],
             "val_every": t["val_every"], "full_val_every": t["full_val_every"],
             "val_subset": t["val_subset"], "synth": cfg["synth"]}

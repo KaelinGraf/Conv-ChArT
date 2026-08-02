@@ -113,7 +113,17 @@ def save_ckpt(path, step, resume_count, model, ema, optim, cfg, last_val, retarg
     }
     if retargeted_from is not None:
         ckpt["retargeted_from"] = retargeted_from
-    torch.save(ckpt, path)
+    # Write-then-rename, not a bare torch.save: the ROLLING call sites overwrite ckpt_latest.pt
+    # in place (train_detector.py:643, train_pair.py:243/267, train_refiner.py:285), and a bare
+    # save truncates the previous good bytes the moment the writer is constructed -- so a crash
+    # anywhere inside the ~75 MB serialisation leaves a 0-byte file and NO resume point. That is
+    # the exact failure the rolling checkpoint was added to prevent (train_detector.py:635-641:
+    # a dead worker at step 164,670 cost 14.7k steps), on a machine that has hard-locked twice on
+    # kswapd shmem_writepage reclaim. Path.replace is atomic within a filesystem, and the tmp
+    # sits in the same run dir, so the rename cannot cross one.
+    tmp = path.with_name(path.name + ".tmp")
+    torch.save(ckpt, tmp)
+    tmp.replace(path)
 
 
 def load_ckpt(path, model, ema, optim, map_location=None, restore_optim=True):

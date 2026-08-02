@@ -102,7 +102,9 @@ def save_ckpt(path, step, resume_count, model, ema, optim, cfg, last_val, retarg
     }
     if retargeted_from is not None:
         ckpt["retargeted_from"] = retargeted_from
-    torch.save(ckpt, path)
+    tmp = path.with_name(path.name + ".tmp")
+    torch.save(ckpt, tmp)
+    tmp.replace(path)
 
 
 def load_ckpt(path, model, ema, optim, map_location=None, restore_optim=True):

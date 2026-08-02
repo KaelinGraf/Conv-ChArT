@@ -405,7 +405,7 @@ def detect(frame_sensor, model, refiner, K=None, dist=None, cfg=None, id_readout
         refiner.eval()
 
     Hs, Ws = frame_sensor.shape
-    r = Ws / W_in
+    r = W_in / Ws   # input/sensor, per the convention pinned at the top of this module
     frame_input = frame_sensor if r == 1 else cv2.resize(frame_sensor, (W_in, H_in), interpolation=cv2.INTER_AREA)
     dev = next(model.parameters()).device
     with torch.no_grad():

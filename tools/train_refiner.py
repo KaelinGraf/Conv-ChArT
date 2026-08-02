@@ -32,6 +32,7 @@ acceptance check for the refiner): mean signed error in original px units,
 binned by the true jitter component, separately per axis.
 """
 import argparse
+from functools import partial
 import sys
 from pathlib import Path
 
@@ -86,7 +87,7 @@ def _soft_argmax_fallback(ref_sigmoid):
     return out.detach().cpu().numpy()
 
 
-def _refiner_val_collate(batch):
+def _refiner_val_collate(batch, sigma=1.5):
     """batch: list of RefinerVal[i] results, each a list of raw {"crop":
     (24,24) uint8, "d": (2,) float64} records for one composite. Flattens
     across composites; renders each crop's target via
@@ -101,7 +102,7 @@ def _refiner_val_collate(batch):
     for crop_list in batch:
         for c in crop_list:
             crops.append(torch.from_numpy(c["crop"]).float().unsqueeze(0) / 255.0)
-            targets.append(torch.from_numpy(render_refiner_target(c["d"])))
+            targets.append(torch.from_numpy(render_refiner_target(c["d"], sigma=sigma)))
             ds.append(c["d"])
     if not crops:
         return None, None, None
@@ -235,7 +236,9 @@ def main():
 
     val_ds = RefinerVal(cfg, n=cfg["synth"]["refiner_val_composites"])
     val_loader = DataLoader(val_ds, batch_size=32, num_workers=8, multiprocessing_context="spawn",
-                             persistent_workers=True, collate_fn=_refiner_val_collate)
+                             persistent_workers=True,
+                             collate_fn=partial(_refiner_val_collate,
+                                                sigma=cfg.get("sigma_ref", 1.5)))
 
     total_steps = rcfg["steps"]
     train_iter = iter(train_loader)

@@ -33,9 +33,9 @@ def _render_detector_targets(cfg, record):
             "n_vis": int(vis.sum())}
 
 
-def _render_refiner_sample(crop):
+def _render_refiner_sample(crop, sigma=1.5):
     image = torch.from_numpy(crop["crop"]).float().unsqueeze(0) / 255.0
-    return {"crop": image, "target": torch.from_numpy(render_refiner_target(crop["d"]))}
+    return {"crop": image, "target": torch.from_numpy(render_refiner_target(crop["d"], sigma=sigma))}
 
 
 def _maybe_replace_generic(crop, rng, frac):
@@ -81,10 +81,14 @@ class SynthStream(IterableDataset):
                     yield record["image"], record
         else:
             frac = self.cfg["synth"].get("refiner_generic_frac", 0.0)
+            # sigma_ref mirrors sigma_hm/sigma_cls: the refiner's 64x64 target width, in 1/8-px
+            # grid units. It was render_refiner_target's Python default at every call site and
+            # so unreachable from config -- the same dead-knob shape as the alpha/beta pair.
+            sigma = self.cfg.get("sigma_ref", 1.5)
             while True:
                 for crop in mixed_refiner_crops(self.cfg, rng, bg_files):
                     crop = _maybe_replace_generic(crop, rng, frac)
-                    yield _render_refiner_sample(crop) if self.render_targets else crop
+                    yield _render_refiner_sample(crop, sigma) if self.render_targets else crop
 
 
 class SynthVal(Dataset):

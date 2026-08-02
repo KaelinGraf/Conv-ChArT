@@ -69,7 +69,8 @@ def shared_signature(cfg):
             "sigma_hm": cfg.get("sigma_hm"), "sigma_cls": cfg.get("sigma_cls"),
             "batch": t["batch"], "accum": t["accum"],
             "val_every": t["val_every"], "full_val_every": t["full_val_every"],
-            "val_subset": t["val_subset"], "synth": cfg["synth"]}
+            "val_subset": t["val_subset"], "synth": cfg["synth"],
+            "negative_p": cfg["negative_p"], "scale_range_px": cfg["scale_range_px"]}
 
 
 def main():

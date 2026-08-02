@@ -39,12 +39,14 @@ def test_refiner_width_default_is_backward_compatible():
     from dcc.model import refiner_for
     base = Refiner()
     assert sum(p.numel() for p in base.parameters()) == 97_056
-    for w in (1.0, 0.5, 0.25):
+    for w in (1.0, 0.5, 0.375, 0.25):
         r = Refiner(width_mult=w)
         assert r.out.out_channels == 64, w
         assert tuple(r(torch.randn(2, 1, 24, 24)).shape) == (2, 1, 64, 64), w
         assert set(r.state_dict()) == set(base.state_dict()), w
-        assert refiner_for(r.state_dict()).load_state_dict(r.state_dict()) is not None or True
+        inferred = refiner_for(r.state_dict())
+        assert inferred.body[1][0].out_channels == r.body[1][0].out_channels, w
+        inferred.load_state_dict(r.state_dict(), strict=True)
 
 
 def test_bias_inits():

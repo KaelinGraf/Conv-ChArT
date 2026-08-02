@@ -162,10 +162,12 @@ def generator_fingerprint(cfg, root):
     plus the config knobs that shape their output: {"files": {relpath: sha1-hex of its bytes},
     "config_sha1": sha1 of the relevant cfg subset as canonical JSON}.
     """
-    rels = ("dcc/board.py", "dcc/synth.py", "dcc/targets.py", "dcc/dataset.py")
+    rels = ("dcc/board.py", "dcc/synth.py", "dcc/targets.py", "dcc/dataset.py",
+            "dcc/refiner_data.py")
     files = {rel: hashlib.sha1((root / rel).read_bytes()).hexdigest() for rel in rels}
     keys = ("board", "synth", "input_size", "scale_range_px", "negative_p", "sigma_hm", "sigma_cls",
             "refiner_jitter_px")
     subset = {k: cfg[k] for k in keys}
+    subset["sigma_ref"] = cfg.get("sigma_ref", 1.5)
     config_sha1 = hashlib.sha1(json.dumps(subset, sort_keys=True).encode()).hexdigest()
     return {"files": files, "config_sha1": config_sha1}

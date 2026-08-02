@@ -219,8 +219,8 @@ class DetectorNet(nn.Module):
 
 def refiner_for(state_dict):
     """Build a Refiner whose width MATCHES a checkpoint, inferred from the weights themselves."""
-    c32 = state_dict["body.0.0.weight"].shape[0]
-    return Refiner(width_mult=c32 / 32.0)
+    c64 = state_dict["body.1.0.weight"].shape[0]
+    return Refiner(width_mult=c64 / 64.0)
 
 
 def detector_kwargs(cfg):

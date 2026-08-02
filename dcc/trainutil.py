@@ -191,10 +191,18 @@ def generator_fingerprint(cfg, root):
     fingerprint an audit run stamped into report.json -- a training run
     refuses to start on a generator or config that has drifted since the
     last green audit."""
-    rels = ("dcc/board.py", "dcc/synth.py", "dcc/targets.py", "dcc/dataset.py")
+    # refiner_data.py joined this list because dataset.py:89 routes EVERY refiner training crop
+    # through mixed_refiner_crops -- the lock was blind to the file that decides what half the
+    # training data looks like, which is precisely the drift class it was built to catch.
+    rels = ("dcc/board.py", "dcc/synth.py", "dcc/targets.py", "dcc/dataset.py",
+            "dcc/refiner_data.py")
     files = {rel: hashlib.sha1((root / rel).read_bytes()).hexdigest() for rel in rels}
     keys = ("board", "synth", "input_size", "scale_range_px", "negative_p", "sigma_hm", "sigma_cls",
             "refiner_jitter_px")
     subset = {k: cfg[k] for k in keys}
+    # sigma_ref via .get, not the loop above: it post-dates most configs (added 358e98e) and
+    # direct indexing would KeyError on all 70 of them. Its default must match
+    # render_refiner_target's, or a config that omits the key would fingerprint as a change.
+    subset["sigma_ref"] = cfg.get("sigma_ref", 1.5)
     config_sha1 = hashlib.sha1(json.dumps(subset, sort_keys=True).encode()).hexdigest()
     return {"files": files, "config_sha1": config_sha1}

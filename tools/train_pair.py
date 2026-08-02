@@ -83,7 +83,15 @@ def shared_signature(cfg):
             "sigma_hm": cfg.get("sigma_hm"), "sigma_cls": cfg.get("sigma_cls"),
             "batch": t["batch"], "accum": t["accum"],
             "val_every": t["val_every"], "full_val_every": t["full_val_every"],
-            "val_subset": t["val_subset"], "synth": cfg["synth"]}
+            "val_subset": t["val_subset"], "synth": cfg["synth"],
+            # negative_p and scale_range_px are TOP-LEVEL keys, not inside cfg["synth"], which is
+            # how they were missed: the worker reads them directly (synth.py:969 draws the
+            # negative coin, synth.py:266 the scale) and SynthVal reads them again for the
+            # validation distribution (dataset.py:110, :113). Two arms differing in either paired
+            # cleanly and then trained AND validated on arm-0's distribution -- silently, which is
+            # the one failure mode this gate exists to make loud. tools/check_queue.py imports
+            # this function rather than restating the key list, so it inherited the same hole.
+            "negative_p": cfg["negative_p"], "scale_range_px": cfg["scale_range_px"]}
 
 
 def main():

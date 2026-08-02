@@ -348,8 +348,12 @@ def refiner_for(state_dict):
     Adoption follow-up, stated rather than silently deferred: if a narrow refiner IS adopted,
     every `Refiner()` call site listed by `grep -n "Refiner("` must move to this helper, or they
     will silently keep building the 97,056-param version."""
-    c32 = state_dict["body.0.0.weight"].shape[0]
-    return Refiner(width_mult=c32 / 32.0)
+    # body.1, NOT body.0: c(32) is not injective over the buildable widths -- 0.5 and 0.375 both
+    # round to 16 channels there, so a 0.375 checkpoint loaded as 0.5 and died on a shape mismatch
+    # naming the wrong culprit. body.1 is c(64): 32 vs 24, distinct. Verified over
+    # (1.0, 0.5, 0.375, 0.25).
+    c64 = state_dict["body.1.0.weight"].shape[0]
+    return Refiner(width_mult=c64 / 64.0)
 
 
 def detector_kwargs(cfg):

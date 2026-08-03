@@ -33,6 +33,8 @@ def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_f
     n = max(float(n_vis_batch), 1.0)
     hm_form = loss_form_hm or loss_form
     cls_form = loss_form_cls or loss_form
+    assert {hm_form, cls_form} <= {"focal", "ce"}, \
+        f"loss_form must be 'focal' or 'ce', got hm={hm_form!r} cls={cls_form!r}"
     head = lambda logit, target, form: (strict_bce(logit, target) if form == "ce"
                                         else focal(logit, target, alpha=alpha, beta=beta))
     return (head(hm_logit, hm_t, hm_form) + lam * head(cls_logit, cls_t, cls_form)) / n
@@ -47,11 +49,25 @@ def loss_kwargs(cfg):
             "alpha": cfg.get("alpha", 2)}
 
 
-def refiner_loss(logits, targets):
-    """Refiner loss: same focal form, normalised by batch size (one forced-1.0 positive per crop by
-    construction, so B is the natural N). targets (B,64,64) is unsqueezed to logits' (B,1,64,64)
-    before combining -- without it, elementwise broadcast would pair every logit-crop against
-    every target-crop (a (B,B,64,64) cross product) instead of matching them one-to-one.
+def refiner_loss(logits, targets, loss_form="focal", alpha=2, beta=4):
+    """Refiner loss, normalised by batch size (one forced-1.0 positive per crop by construction, so
+    B is the natural N). targets (B,64,64) is unsqueezed to logits' (B,1,64,64) before combining
+    -- without it, elementwise broadcast would pair every logit-crop against every target-crop
+    (a (B,B,64,64) cross product) instead of matching them one-to-one.
     """
     b = logits.shape[0]
-    return focal(logits, targets.unsqueeze(1)) / max(b, 1)
+    assert loss_form in ("focal", "ce"), f"loss_form must be 'focal' or 'ce', got {loss_form!r}"
+    t = targets.unsqueeze(1)
+    per_batch = strict_bce(logits, t) if loss_form == "ce" else focal(logits, t, alpha=alpha, beta=beta)
+    return per_batch / max(b, 1)
+
+
+def refiner_loss_kwargs(cfg):
+    """refiner_loss's form/alpha/beta from a config, resolved in ONE place -- the refiner twin of
+    loss_kwargs, and deliberately a separate key (`refiner_loss_form`) from the detector's
+    `loss_form`: the two heads are trained by different scripts against different readouts, and
+    an arm that switches the detector to BCE should not silently switch the refiner too.
+    """
+    return {"loss_form": cfg.get("refiner_loss_form", "focal"),
+            "beta": cfg.get("focal_beta", cfg.get("beta", 4)),
+            "alpha": cfg.get("alpha", 2)}

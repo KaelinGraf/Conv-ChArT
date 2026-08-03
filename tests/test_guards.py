@@ -13,7 +13,8 @@ from dcc.trainutil import generator_fingerprint
 
 ROOT = Path(__file__).parents[1]
 CONFIG_PATH = ROOT / "configs" / "default.yaml"
-FINGERPRINT_RELS = ("dcc/board.py", "dcc/synth.py", "dcc/targets.py", "dcc/dataset.py")
+FINGERPRINT_RELS = ("dcc/board.py", "dcc/synth.py", "dcc/targets.py", "dcc/dataset.py",
+                    "dcc/refiner_data.py")
 
 
 @pytest.fixture(scope="module")

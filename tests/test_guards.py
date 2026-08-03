@@ -13,7 +13,13 @@ from dcc.trainutil import generator_fingerprint
 
 ROOT = Path(__file__).parents[1]
 CONFIG_PATH = ROOT / "configs" / "default.yaml"
-FINGERPRINT_RELS = ("dcc/board.py", "dcc/synth.py", "dcc/targets.py", "dcc/dataset.py")
+# Deliberately a HARDCODED copy of generator_fingerprint's own tuple, not an import of it: the
+# point is to trip when the covered set changes in EITHER direction. Importing would make an
+# accidental removal -- the failure mode that matters, since it silently un-covers a generator
+# file -- pass green. refiner_data.py was added 2026-08-03 after the audit found the lock blind
+# to it, even though dataset.py:89 routes every refiner training crop through it.
+FINGERPRINT_RELS = ("dcc/board.py", "dcc/synth.py", "dcc/targets.py", "dcc/dataset.py",
+                    "dcc/refiner_data.py")
 
 
 @pytest.fixture(scope="module")

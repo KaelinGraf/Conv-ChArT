@@ -122,11 +122,14 @@ def _bias_bins(values, errors):
     return out
 
 
-def run_refiner_validation(model, loader, device):
-    """Returns {val_loss, m03, bias_vs_jitter}."""
+def run_refiner_validation(model, loader, device, rl_kw=None):
+    """Returns {val_loss, m03, bias_vs_jitter}. rl_kw: refiner_loss_kwargs(cfg) from the caller --
+    passed in rather than re-resolved here so the val loss is scored with the SAME loss the run
+    trained under, from a single resolution site (eval_checkpoint.py is the other caller)."""
     import numpy as np
     import torch
     from dcc.losses import refiner_loss
+    rl_kw = rl_kw or {}
 
     try:
         from dcc.pipeline import soft_argmax
@@ -148,7 +151,7 @@ def run_refiner_validation(model, loader, device):
 
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 logits = model(crops)
-                loss = refiner_loss(logits, targets_d)
+                loss = refiner_loss(logits, targets_d, **rl_kw)
             loss_sum += float(loss) * crops.shape[0]
             loss_n += crops.shape[0]
 
@@ -192,7 +195,7 @@ def main():
     from torch.utils.data import DataLoader
 
     from dcc.dataset import RefinerVal, SynthStream, load_config
-    from dcc.losses import refiner_loss  # noqa: F401 -- imported here so a missing dcc.losses fails fast
+    from dcc.losses import refiner_loss, refiner_loss_kwargs  # noqa: F401 -- fail fast on a missing dcc.losses
     from dcc.model import Refiner
     from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, save_ckpt
 
@@ -209,10 +212,12 @@ def main():
     # refiner_width (default 1.0 = the shipped 97,056-param architecture, bit-identical) is the
     # size lever for the small tiers, where the fixed refiner dominates: 11% of Conv-ChArT's
     # total but 36% of the 172k detector's. Read from the config so an arm is a one-key cut.
+    rl_kw = refiner_loss_kwargs(cfg)
     rw = cfg.get("refiner_width", 1.0)
     model = Refiner(width_mult=rw).to(device, memory_format=torch.channels_last)
     eval_model = Refiner(width_mult=rw).to(device, memory_format=torch.channels_last)
-    print(f"[train_refiner] refiner_width={rw} params={sum(p.numel() for p in model.parameters()):,}")
+    print(f"[train_refiner] refiner_width={rw} params={sum(p.numel() for p in model.parameters()):,} "
+          f"loss_form={rl_kw['loss_form']} sigma_ref={cfg.get('sigma_ref', 1.5)}")
     model.train()
 
     ema = EMA(model, decay=rcfg["ema_decay"])
@@ -253,7 +258,7 @@ def main():
         optim.zero_grad(set_to_none=True)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             logits = model(crops)
-            loss = refiner_loss(logits, targets)
+            loss = refiner_loss(logits, targets, **rl_kw)
         loss.backward()
         grad_norm = nn.utils.clip_grad_norm_(model.parameters(), rcfg["clip_norm"])
 
@@ -276,7 +281,7 @@ def main():
         if step % rcfg["val_every"] == 0 or step == total_steps:
             v0 = time.time()
             ema.copy_to(eval_model)
-            result = run_refiner_validation(eval_model, val_loader, device)
+            result = run_refiner_validation(eval_model, val_loader, device, rl_kw)
             print(f"[val step {step}] loss={result['val_loss']} m03={result['m03']} "
                   f"bias_vs_jitter={result['bias_vs_jitter']}")
             logger.log(step=step, val=result)

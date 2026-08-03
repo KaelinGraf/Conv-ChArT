@@ -69,6 +69,12 @@ def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_f
     n = max(float(n_vis_batch), 1.0)
     hm_form = loss_form_hm or loss_form
     cls_form = loss_form_cls or loss_form
+    # Anything that is not exactly "ce" fell through to focal, so "bce" -- the natural typo, given
+    # the function selected is literally named strict_bce -- trained a full arm budget on the wrong
+    # loss with no error anywhere in the chain. cut_ablation's gate diffs KEYS, not values, so it
+    # cannot catch it either. All 49 live values are valid; this makes the 50th fail at step 0.
+    assert {hm_form, cls_form} <= {"focal", "ce"}, \
+        f"loss_form must be 'focal' or 'ce', got hm={hm_form!r} cls={cls_form!r}"
     head = lambda logit, target, form: (strict_bce(logit, target) if form == "ce"
                                         else focal(logit, target, alpha=alpha, beta=beta))
     return (head(hm_logit, hm_t, hm_form) + lam * head(cls_logit, cls_t, cls_form)) / n
@@ -88,12 +94,39 @@ def loss_kwargs(cfg):
             "alpha": cfg.get("alpha", 2)}
 
 
-def refiner_loss(logits, targets):
-    """Refiner loss: same focal form, normalised by batch size (one
-    forced-1.0 positive per crop by construction, so B is the natural N).
-    targets (B,64,64) is unsqueezed to logits' (B,1,64,64) before combining --
-    without it, elementwise broadcast would pair every logit-crop against
-    every target-crop (a (B,B,64,64) cross product) instead of matching them
-    one-to-one."""
+def refiner_loss(logits, targets, loss_form="focal", alpha=2, beta=4):
+    """Refiner loss, normalised by batch size (one forced-1.0 positive per crop by
+    construction, so B is the natural N). targets (B,64,64) is unsqueezed to logits'
+    (B,1,64,64) before combining -- without it, elementwise broadcast would pair every
+    logit-crop against every target-crop (a (B,B,64,64) cross product) instead of matching
+    them one-to-one.
+
+    loss_form (2026-08-03, Kaelin's question "is the refiner using BCE"): it was not, and the
+    form was not reachable from config at all -- focal was hard-wired here while the detector
+    grew a full loss_form / loss_form_hm / loss_form_cls path. That gap matters because the
+    switch to one-hot BCE is the LARGEST single effect this campaign measured on the detector
+    heatmap (full width: p95 0.8149 -> 0.6690, tail 0.1221 -> 0.0056%, a 22x reduction), and the
+    refiner's target is structurally the same object -- a Gaussian splat with a forced 1.0 peak.
+
+    It is NOT an obvious win, for a mechanically specific reason worth recording before the
+    measurement: the detector reads a hard argmax, so a sharper target is unambiguously better,
+    whereas the refiner reads a 5x5 soft-argmax CENTROID whose sub-pixel precision comes from
+    interpolating a SPREAD peak. Drive the target to one-hot and the output approaches a delta,
+    at which point the centroid degenerates toward the hard argmax -- 1/8-px quantisation, i.e.
+    0.125 px, WORSE than the 0.0957 px median three seeds currently reach. Either outcome is
+    informative; this parameter is what makes it measurable."""
     b = logits.shape[0]
-    return focal(logits, targets.unsqueeze(1)) / max(b, 1)
+    assert loss_form in ("focal", "ce"), f"loss_form must be 'focal' or 'ce', got {loss_form!r}"
+    t = targets.unsqueeze(1)
+    per_batch = strict_bce(logits, t) if loss_form == "ce" else focal(logits, t, alpha=alpha, beta=beta)
+    return per_batch / max(b, 1)
+
+
+def refiner_loss_kwargs(cfg):
+    """refiner_loss's form/alpha/beta from a config, resolved in ONE place -- the refiner twin of
+    loss_kwargs, and deliberately a separate key (`refiner_loss_form`) from the detector's
+    `loss_form`: the two heads are trained by different scripts against different readouts, and
+    an arm that switches the detector to BCE should not silently switch the refiner too."""
+    return {"loss_form": cfg.get("refiner_loss_form", "focal"),
+            "beta": cfg.get("focal_beta", cfg.get("beta", 4)),
+            "alpha": cfg.get("alpha", 2)}

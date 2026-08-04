@@ -113,7 +113,7 @@ def main():
     from dcc.dataset import SynthStream, SynthVal, load_config
     from dcc.losses import detector_loss, loss_kwargs
     from dcc.model import DetectorNet, detector_kwargs
-    from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, save_ckpt
+    from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, save_ckpt, warn_cfg_drift
 
     assert torch.cuda.is_available(), "CUDA required"
     assert torch.backends.cuda.flash_sdp_enabled(), "flash SDPA backend is disabled"
@@ -161,6 +161,7 @@ def main():
         a["step"], a["resume_count"], a["last_val"] = 0, 0, None
         if a["resume"]:
             ck = load_ckpt(a["resume"], a["model"], a["ema"], a["optim"], map_location=device)
+            warn_cfg_drift(ck, a["cfg"], steps=a["total"])
             a["step"], a["resume_count"], a["last_val"] = ck["step"], ck["resume_count"] + 1, ck["last_val"]
         a["micro"], a["accum_loss"], a["n_samples"] = 0, 0.0, 0
         a["es"] = {**td._EARLY_STOP_DEFAULTS, **(t.get("early_stop") or {})}

@@ -197,7 +197,7 @@ def main():
     from dcc.dataset import RefinerVal, SynthStream, load_config
     from dcc.losses import refiner_loss, refiner_loss_kwargs  # noqa: F401 -- fail fast on a missing dcc.losses
     from dcc.model import Refiner
-    from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, save_ckpt
+    from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, save_ckpt, warn_cfg_drift
 
     assert torch.cuda.is_available(), "CUDA required"
     device = torch.device("cuda")
@@ -229,6 +229,7 @@ def main():
     step, resume_count, last_val = 0, 0, None
     if args.resume:
         ckpt = load_ckpt(args.resume, model, ema, optim, map_location=device)
+        warn_cfg_drift(ckpt, cfg, steps=rcfg["steps"], budget_key="refiner_train.steps")
         step, resume_count, last_val = ckpt["step"], ckpt["resume_count"] + 1, ckpt["last_val"]
 
     stream_seed = cfg["synth"]["train_seed"] * 1000 + resume_count

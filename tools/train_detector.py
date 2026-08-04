@@ -483,7 +483,7 @@ def main():
     from dcc.dataset import SynthStream, SynthVal, load_config
     from dcc.losses import detector_loss, loss_kwargs  # noqa: F401 -- imported here so a missing dcc.losses fails fast
     from dcc.model import DetectorNet, detector_kwargs
-    from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, load_retarget_ckpt, param_groups, save_ckpt
+    from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, load_retarget_ckpt, param_groups, save_ckpt, warn_cfg_drift
 
     assert torch.cuda.is_available(), "CUDA required"
     assert torch.backends.cuda.flash_sdp_enabled(), "flash SDPA backend is disabled"
@@ -543,6 +543,7 @@ def main():
         # mismatch this run's param_groups -- restore_optim=False for that
         # combination, model/ema/step/RNG still transfer as usual.
         ckpt = load_ckpt(args.resume, model, ema, optim, map_location=device, restore_optim=not freeze)
+        warn_cfg_drift(ckpt, cfg, steps=tcfg["steps"])
         step, resume_count, last_val = ckpt["step"], ckpt["resume_count"] + 1, ckpt["last_val"]
 
     stream_seed = cfg["synth"]["train_seed"] * 1000 + resume_count

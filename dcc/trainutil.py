@@ -143,6 +143,54 @@ def load_ckpt(path, model, ema, optim, map_location=None, restore_optim=True):
     return ckpt
 
 
+def flat_cfg(d, pre=""):
+    """Nested config dict -> {'a.b.c': value}. Comparison is on LEAVES, so a changed nested key
+    cannot hide inside an unchanged parent -- the property both callers depend on
+    (warn_cfg_drift's resume check and tools/cut_ablation.py's one-key ablation gate)."""
+    out = {}
+    for k, v in d.items():
+        kk = f"{pre}{k}"
+        if isinstance(v, dict):
+            out.update(flat_cfg(v, kk + "."))
+        else:
+            out[kk] = v
+    return out
+
+
+def warn_cfg_drift(ckpt, live_cfg, steps=None, budget_key="train.steps"):
+    """Compare a resumed checkpoint's OWN config against the config the resume is running under,
+    and warn on every leaf that changed. Returns the diff dict (empty if clean).
+
+    WHY THIS EXISTS. Resume discarded ckpt["cfg"] entirely, so a bare `--resume` without the
+    original `--steps` silently re-anchored the LR schedule: cosine_lr anneals to `total`
+    (trainutil.py's cosine_lr), so resuming a 35k-budget arm under the YAML's 250k default puts
+    the LR back near peak at a point that should be at the 3.0e-6 floor -- measured at 11-91x
+    the correct value. The run then ends WORSE than if it had never been resumed, with nothing
+    in the logs saying so. Shell launchers guarded this by convention; the trainers holding the
+    recorded budget did not.
+
+    Warns rather than raises: a deliberate config change on resume is legitimate (the compressed
+    anneal at 30.6k -> 35k was exactly that), so this must not block it -- only make it loud."""
+    old = ckpt.get("cfg")
+    if not old:
+        return {}
+    fo, fn = flat_cfg(old), flat_cfg(live_cfg)
+    diff = {k: (fo.get(k, "<absent>"), fn.get(k, "<absent>")) for k in set(fo) | set(fn)
+            if fo.get(k) != fn.get(k)}
+    if diff:
+        print(f"[resume] WARNING: {len(diff)} config key(s) differ from the checkpoint's own cfg:")
+        for k, (was, now) in sorted(diff.items()):
+            print(f"[resume]   {k}: {was!r} -> {now!r}")
+    # budget_key, not a hardcoded "train.steps": the refiner's budget lives under
+    # refiner_train, and reading the wrong section would silently never fire.
+    was = fo.get(budget_key)
+    if steps is not None and was not in (None, steps):
+        print(f"[resume] WARNING: LR SCHEDULE RE-ANCHORED -- checkpoint {budget_key}={was} vs "
+              f"this run's {steps}. cosine_lr anneals to the budget, so resuming under a "
+              f"different one puts the LR somewhere the original schedule never visited.")
+    return diff
+
+
 def load_retarget_ckpt(path, model, map_location=None):
     """New-board retarget path: loads every non-cls.* tensor from a base
     checkpoint (trained on ANY board -- its own n_cls, hence its cls.*

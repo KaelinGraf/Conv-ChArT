@@ -158,31 +158,54 @@ def check_generator_lock(cfg, root, audit_report):
 def check_init_loss_prediction(model, cfg, x, hm_t, ct_t, n_vis, hms_np, cts_np):
     """Analytic init-time detector_loss with every sigmoid pinned at p0 =
     sigmoid(-2.19) (the hm/cls bias init), pointwise over the ACTUAL rendered
-    targets, vs. the real measured loss (eval, fp32). alpha=2/beta=4 are
-    focal()'s own hardcoded defaults -- detector_loss never threads cfg's
-    (currently-equal) alpha/beta through, so mirroring focal() here, not cfg,
-    is what matches the measured code path."""
+    targets, vs. the real measured loss (eval, fp32).
+
+    BOTH SIDES FOLLOW THE ARM'S OWN LOSS (audit B2, fixed 2026-08-05). This check
+    previously hardcoded focal's alpha=2/beta=4 formula AND called detector_loss with
+    no loss kwargs, so for every `loss_form: ce` (or per-head, or focal_beta) arm it
+    predicted one loss and measured a different one -- neither of them the loss that
+    arm actually trains under. It still passed, because comparing focal against focal
+    lands well inside the 0.5-2.0 ratio band; a green gate that certifies a code path
+    the run will never execute is worse than no gate. The docstring's old justification
+    ("detector_loss never threads cfg's alpha/beta through") was true when written and
+    is not now: detector_loss takes loss_form/loss_form_hm/loss_form_cls/alpha/beta, and
+    loss_kwargs() is the single resolver the trainers already use.
+
+    strict_bce is binary_cross_entropy_with_logits against (y == 1.0), so its negatives
+    take the FULL -log(1-p0) with no (1-y)^beta discount and no alpha modulation -- which
+    is exactly why a ce arm's init loss is far larger than a focal arm's, and why
+    predicting the wrong one would have been caught only by luck."""
     import numpy as np
-    from dcc.losses import detector_loss
+    from dcc.losses import detector_loss, loss_kwargs
 
-    alpha, beta = 2, 4
+    lk = loss_kwargs(cfg)
+    alpha, beta = lk["alpha"], lk["beta"]
+    hm_form = lk["loss_form_hm"] or lk["loss_form"]
+    cls_form = lk["loss_form_cls"] or lk["loss_form"]
     p0 = 1.0 / (1.0 + math.exp(2.19))
-    c_pos = (1 - p0) ** alpha * -math.log(p0)
-    c_neg = p0 ** alpha * -math.log(1 - p0)
 
-    def term(y):
+    def term(y, form):
+        """Per-cell init cost summed over one rendered target, mirroring dcc/losses.py's
+        own branch for `form`. Positives are the exact-1.0 cells in BOTH forms."""
+        if form == "ce":
+            return float(np.where(y == 1.0, -math.log(p0), -math.log(1 - p0)).sum())
+        c_pos = (1 - p0) ** alpha * -math.log(p0)
+        c_neg = p0 ** alpha * -math.log(1 - p0)
         return float(np.where(y == 1.0, c_pos, (1 - y) ** beta * c_neg).sum())
 
-    predicted = (sum(term(h) for h in hms_np) + cfg["lambda_cls"] * sum(term(c) for c in cts_np)) / max(n_vis, 1)
+    predicted = (sum(term(h, hm_form) for h in hms_np)
+                 + cfg["lambda_cls"] * sum(term(c, cls_form) for c in cts_np)) / max(n_vis, 1)
 
     import torch
     model.eval()
     with torch.no_grad():
         hm_logit, cls_logit = model(x)
-        measured = float(detector_loss(hm_logit, cls_logit, hm_t, ct_t, n_vis, cfg["lambda_cls"]))
+        measured = float(detector_loss(hm_logit, cls_logit, hm_t, ct_t, n_vis, cfg["lambda_cls"], **lk))
     ratio = measured / predicted if predicted > 0 else float("inf")
     return ("PASS" if 0.5 <= ratio <= 2.0 else "FAIL"), {"predicted": predicted, "measured": measured,
-                                                          "ratio": ratio, "n_vis": n_vis}
+                                                          "ratio": ratio, "n_vis": n_vis,
+                                                          "hm_form": hm_form, "cls_form": cls_form,
+                                                          "alpha": alpha, "beta": beta}
 
 
 def check_translation_equivariance(model, image, device):

@@ -78,7 +78,7 @@ def rf(seq):
 
 def main():
     args = build_parser().parse_args()
-    import numpy as np, cv2, torch
+    import numpy as np, cv2
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt

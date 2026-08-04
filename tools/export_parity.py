@@ -64,6 +64,10 @@ def build_parser():
     p.add_argument("--half", default="both", choices=["both", "detector", "refiner"],
                    help="which net runs in fp16; attributes the tail to one stage")
     p.add_argument("--skip-onnx", action="store_true")
+    p.add_argument("--skip-parity", action="store_true",
+                   help="refresh the ONNX artefacts WITHOUT touching export_parity.json. "
+                        "Exists because re-running this tool at a small --n to re-export a "
+                        "graph silently overwrote a completed n=1000 parity record.")
     return p
 
 
@@ -83,14 +87,18 @@ def load_model(ckpt_path, device):
     return model.eval(), cfg, ck
 
 
-def export_onnx(model, cfg, out_path):
+def export_onnx(model, shape, out_path, output_names=("hm", "cls")):
+    """shape is (H, W) of the net's OWN input -- 480x640 for a detector, 24x24 for the refiner.
+    The refiner is exported too: the shipping pipeline is detector AND refiner, so a detector
+    engine alone is not a deployable set, and tests/test_model.py only ever exported an
+    UNTRAINED Refiner."""
     import onnx
     import torch
 
-    W, H = cfg["input_size"]
+    H, W = shape
     torch.onnx.export(model, torch.randn(1, 1, H, W, device=next(model.parameters()).device),
                       str(out_path), opset_version=17, dynamo=False,
-                      input_names=["input"], output_names=["hm", "cls"])
+                      input_names=["input"], output_names=list(output_names))
     g = onnx.load(str(out_path))
     onnx.checker.check_model(g)
     ops = sorted({n.op_type for n in g.graph.node})
@@ -229,9 +237,13 @@ def main():
         entry = {"ckpt": path, "step": ck.get("step"), "config_input_size": cfg["input_size"],
                  "n_params": sum(p.numel() for p in model.parameters())}
         if not args.skip_onnx:
-            entry["onnx"] = export_onnx(model, cfg, out / f"detector_{tier}.onnx")
+            entry["onnx"] = export_onnx(model, (cfg["input_size"][1], cfg["input_size"][0]),
+                                        out / f"detector_{tier}.onnx")
             print(f"[{tier}] onnx OK  {entry['onnx']['n_nodes']} nodes  "
                   f"{entry['onnx']['size_mb']} MB  banned={entry['onnx']['banned_ops_present']}")
+        if args.skip_parity:
+            report["tiers"][tier] = entry
+            continue
         par = entry["parity_fp16"] = parity(model, refiner, cfg, args.n, device, args.refine_min_peak, args.half)
         entry["verdict"], entry["failures"] = verdict(par)
         print(f"[{tier}] {entry['verdict']}  d_corner p95={par['d_corner_p95']:.5f} px  "
@@ -242,6 +254,18 @@ def main():
             print(f"       failures: {entry['failures']}")
         report["tiers"][tier] = entry
 
+    if not args.skip_onnx:
+        # 24x24 is the refiner's fixed crop (dcc/refiner_data.py's contract); its single output
+        # is the 64x64 logit map, not the detector's (hm, cls) pair.
+        report["refiner_onnx"] = export_onnx(refiner, (24, 24), out / "refiner.onnx",
+                                             output_names=("logits",))
+        r = report["refiner_onnx"]
+        print(f"[refiner] onnx OK  {r['n_nodes']} nodes  {r['size_mb']} MB  "
+              f"banned={r['banned_ops_present']}")
+
+    if args.skip_parity:
+        print("\n--skip-parity: ONNX artefacts refreshed, export_parity.json left untouched")
+        return
     (out / "export_parity.json").write_text(json.dumps(report, indent=2))
     print(f"\n-> {out / 'export_parity.json'}")
 

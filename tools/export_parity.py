@@ -64,6 +64,8 @@ def build_parser():
     p.add_argument("--half", default="both", choices=["both", "detector", "refiner"],
                    help="which net runs in fp16; attributes the tail to one stage")
     p.add_argument("--skip-onnx", action="store_true")
+    p.add_argument("--skip-ort", action="store_true", help="skip the op-level ONNX check")
+    p.add_argument("--ort-n", type=int, default=8, help="random inputs for the ONNX check")
     p.add_argument("--skip-parity", action="store_true",
                    help="refresh the ONNX artefacts WITHOUT touching export_parity.json. "
                         "Exists because re-running this tool at a small --n to re-export a "
@@ -108,6 +110,59 @@ def export_onnx(model, shape, out_path, output_names=("hm", "cls")):
             "size_mb": round(out_path.stat().st_size / 2**20, 2)}
 
 
+def onnx_agreement(model, onnx_path, cfg, n, device, seed=20260805):
+    """Op-level check: does the EXPORTED GRAPH compute what PyTorch computes?
+
+    onnx.checker only validates that the graph is well-FORMED. A structurally valid graph can
+    still produce different numbers -- a mis-set attribute, an operator whose ONNX semantics
+    differ subtly from torch's -- and finding that out on the Orin is the expensive way.
+
+    fp32 on both sides deliberately: this isolates EXPORT fidelity from the fp16 question the
+    parity pass already answers. Inputs are random rather than val frames because the question is
+    graph equivalence, not accuracy, and random input exercises the full dynamic range.
+    CPUExecutionProvider so the comparison is not itself perturbed by a GPU kernel choice.
+
+    TF32 MUST BE DISABLED, and this is the whole subtlety. torch.backends.cudnn.allow_tf32
+    defaults to TRUE, so "fp32" convolutions on an Ampere-or-later GPU actually run in TF32 --
+    10 mantissa bits, the SAME as fp16. Measured on the 882k tier against this very graph:
+
+        torch CUDA, cuDNN TF32 on (the default)  vs ORT CPU : 6.890e-02
+        torch CUDA, TF32 off                     vs ORT CPU : 1.545e-04
+        torch CPU                                vs ORT CPU : 1.354e-04
+
+    The first number reads as a catastrophic export failure and is nothing of the kind -- it is
+    PyTorch's own reduced precision. Leaving TF32 on would have condemned a perfectly good graph.
+    The ~1.4e-4 residual is genuine fp32 kernel-ordering difference between two independent
+    implementations; on a logit it moves the sigmoid by ~3.5e-5, which nothing downstream of
+    tau_hm = 0.3 can perceive. Hence the 1e-3 threshold rather than bit-equality."""
+    import numpy as np
+    import onnxruntime as ort
+    import torch
+
+    tf32_m, tf32_c = torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = torch.backends.cudnn.allow_tf32 = False
+
+    W, H = cfg["input_size"]
+    sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    name = sess.get_inputs()[0].name
+    rng = np.random.default_rng(seed)
+    d_hm, d_cls = [], []
+    with torch.no_grad():
+        for _ in range(n):
+            x = rng.random((1, 1, H, W), dtype=np.float32)
+            t_hm, t_cls = model(torch.from_numpy(x).to(device))
+            o_hm, o_cls = sess.run(None, {name: x})
+            d_hm.append(float(np.abs(t_hm.float().cpu().numpy() - o_hm).max()))
+            d_cls.append(float(np.abs(t_cls.float().cpu().numpy() - o_cls).max()))
+    torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32 = tf32_m, tf32_c
+    return {"n": n, "provider": "CPUExecutionProvider", "precision": "true fp32 both sides (TF32 disabled)",
+            "max_abs_diff_hm": max(d_hm), "max_abs_diff_cls": max(d_cls),
+            "onnxruntime": ort.__version__,
+            # 1e-3 on a logit is far below anything the tau_hm=0.3 sigmoid threshold can notice;
+            # exact bit-equality is not expected across two independent kernel implementations.
+            "verdict": "PASS" if max(max(d_hm), max(d_cls)) < 1e-3 else "FAIL"}
+
+
 def parity(model, refiner, cfg, n, device, refine_min_peak=None, half="both"):
     """Paired fp32-vs-fp16 decode over the fixed SynthVal stream, through the FULL detect()
     pipeline. -> summary dict.
@@ -143,6 +198,13 @@ def parity(model, refiner, cfg, n, device, refine_min_peak=None, half="both"):
     # (107/101/104 corners at n=1000) while the refiner is shared, which POINTS at the refiner
     # but does not prove it. half="detector"/"refiner" casts one net at a time so the tail can
     # be attributed by measurement instead of inference.
+    # TRUE-fp32 REFERENCE. cudnn.allow_tf32 defaults True, so the "fp32" arm of this comparison
+    # would otherwise run convs in TF32 -- which has the SAME 10-bit mantissa as fp16, and would
+    # therefore flatter the fp16 arm by measuring it against an already-reduced-precision
+    # reference. See onnx_agreement's docstring for the measurement that surfaced this.
+    tf32_m, tf32_c = torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = torch.backends.cudnn.allow_tf32 = False
+
     m16 = Half(model) if half in ("both", "detector") else model
     r16 = (Half(refiner) if half in ("both", "refiner") else refiner) if refiner is not None else None
     val = SynthVal(cfg, n=n, seed=cfg["synth"]["val_seed"])
@@ -172,6 +234,7 @@ def parity(model, refiner, cfg, n, device, refine_min_peak=None, half="both"):
             if c32[ia]["index"] != c16[j[ia]]["index"]:
                 id_diff += 1
 
+    torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32 = tf32_m, tf32_c
     d = np.asarray(d_pos) if d_pos else np.zeros(0)
     return {"n_images": n, "n_corners_fp32": n_32, "n_corners_fp16": n_16,
             "n_matched": n_pair, "unmatched_fp32": n_32 - n_pair,
@@ -226,8 +289,7 @@ def main():
     report = {"gate": "P15 fp16 export parity", "device": device, "n_val": args.n,
               "refiner_ckpt": args.refiner,
               "thresholds": {"d_corner_px": 0.05, "id_diff_pct": 0.1}, "half": args.half,
-              "onnx_runtime_check": "NOT RUN -- onnxruntime absent from the MLWS env; "
-                                    "this gate covers export validity and fp16 numerics only",
+              "onnx_runtime_check": "RUN -- see per-tier onnx_agreement (fp32, CPUExecutionProvider)",
               "tiers": {}}
 
     for tier, path in tiers:
@@ -241,6 +303,11 @@ def main():
                                         out / f"detector_{tier}.onnx")
             print(f"[{tier}] onnx OK  {entry['onnx']['n_nodes']} nodes  "
                   f"{entry['onnx']['size_mb']} MB  banned={entry['onnx']['banned_ops_present']}")
+            if not args.skip_ort:
+                a = entry["onnx_agreement"] = onnx_agreement(model, entry["onnx"]["path"], cfg,
+                                                              args.ort_n, device)
+                print(f"[{tier}] onnxruntime {a['verdict']}  max|d| hm={a['max_abs_diff_hm']:.3e} "
+                      f"cls={a['max_abs_diff_cls']:.3e}  (n={a['n']}, fp32 both sides)")
         if args.skip_parity:
             report["tiers"][tier] = entry
             continue

@@ -19,6 +19,14 @@ the S offset) has slipped.
 Everything else -- background prep, occlusion, photometrics, geometric
 corner visibility -- is the exact dcc.synth machinery generate_sample uses.
 Only the pinhole sampling and the perspective warp are new here.
+
+That claim was FALSE until 2026-08-05 (audit B1) and is worth stating plainly, because the
+docstring asserting it is why the gap went unnoticed: _apply_photometric was called with no
+board_mask and no holes_out, and after the visibility loop instead of before. See the comment at
+the call site. KNOWN REMAINING DIVERGENCE: generate_sample also applies SAM2 _apply_cutouts and
+tests corner visibility against their alpha; this generator does not, so object occlusion is
+still absent from the pose sets. That is deliberate and out of B1's scope -- object occlusion is
+measured on its own axis in the robustness sweep -- but it is a divergence, not a match.
 """
 import argparse
 import hashlib
@@ -125,7 +133,8 @@ def main():
     import yaml
     from dcc.board import get_board, n_corners, render_board
     from dcc.pipeline import canon_lattice
-    from dcc.synth import list_backgrounds, _prep_background, _apply_occlusion, _apply_photometric, visible
+    from dcc.synth import (list_backgrounds, _prep_background, _apply_occlusion,
+                            _apply_photometric, _warp_mask, visible)
     from dcc.viz import draw_overlay, tile
 
     with open(args.config) as f:
@@ -171,10 +180,27 @@ def main():
             bg_crop = _prep_background(bg, rng, cfg["synth"], W, H)
             work = _composite_board_persp(bg_crop, board_3ch, mask_src, Hmat, W, H)
             holes = _apply_occlusion(work, rng, cfg["synth"]["occlusion"], W, H)
+            # AUDIT B1 (fixed 2026-08-05). This call previously passed neither board_mask nor
+            # holes_out, and ran AFTER the visibility loop. Both mattered:
+            #   * board_mask/board_centroid gate the BOARD-ANCHORED steps (dcc/synth.py:631-632:
+            #     specular, NIR ink-contrast, the differencing illumination lobe). Without a mask
+            #     none of them ever fired -- so the pose benchmark omitted ink-contrast, which the
+            #     robustness sweep measures as the WORST factor of the twenty.
+            #   * holes_out lets a strong refractive droplet register an occluding hole in time for
+            #     THIS sample's corners to see it (dcc/synth.py:995-1000 documents exactly this,
+            #     and is why generate_sample moved photometrics above its own visibility loop).
+            # The visibility loop therefore moves BELOW the photometric call, matching
+            # generate_sample. board_mask is re-derived via _warp_mask from the same Hmat, which
+            # takes a 3x3 directly (it warpPerspectives), so this reuses the canonical helper
+            # rather than reimplementing the board alpha.
+            board_mask = _warp_mask(Hmat, cfg["synth"]["render_res"], W, H)
+            board_centroid = tuple(np.asarray(img_pts, dtype=np.float64).mean(axis=0))
+            work = _apply_photometric(work, rng, cfg["synth"]["photometric"], W, H,
+                                       board_mask=board_mask, board_centroid=board_centroid,
+                                       holes_out=holes)
             corners_out = [{"x": float(x), "y": float(y), "index": k,
                              "visible": visible((x, y), holes, (W, H))}
                             for k, (x, y) in enumerate(img_pts)]
-            work = _apply_photometric(work, rng, cfg["synth"]["photometric"], W, H)
             image = cv2.cvtColor(np.clip(work, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
 
             fname = f"images/{i:06d}.png"

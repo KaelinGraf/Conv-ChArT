@@ -29,6 +29,7 @@ Conv-ChArT/
 │   ├── synth.py                  generator: compositing, perspective warp, occlusion, cutouts, photometrics (489 ln)
 │   ├── targets.py                 target renderers: heatmap / class / refiner Gaussian splats (70 ln)
 │   ├── dataset.py                  torch Dataset/IterableDataset shims over synth.py: SynthStream, SynthVal, RefinerVal (118 ln)
+│   ├── refiner_data.py              refiner crop stream: jittered 24×24 crops around each corner, plus the fast per-crop render path (259 ln)
 │   ├── viz.py                       visualisation primitives shared by view.py / audit.py / introspect.py (95 ln)
 │   ├── model.py                      networks: DetectorNet and Refiner (247 ln)
 │   ├── losses.py                      penalty-reduced focal losses, logit-space (34 ln)
@@ -42,10 +43,10 @@ Conv-ChArT/
 │   ├── train_detector.py            Stage-1 (detector) training loop
 │   ├── train_refiner.py              Stage-2 (refiner) training loop
 │   └── introspect.py                  conference-grade introspection panels (attention, ERF, gates, features, pipeline, 3D heatmap)
-├── tests/                    pytest, 49 tests total, ~231 s (see Testing below)
+├── tests/                    pytest, 56 tests total, ~7.7 min (see Testing below)
 │   ├── test_synth.py          board + target-renderer conventions (7 tests)
-│   ├── test_generator.py       full generator: warps, perspective calibration, visibility, cutouts, determinism (15 tests)
-│   ├── test_model.py            DetectorNet/Refiner shapes, param counts, RoPE, losses, ONNX export (11 tests)
+│   ├── test_generator.py       full generator: warps, perspective calibration, visibility, cutouts, determinism (19 tests)
+│   ├── test_model.py            DetectorNet/Refiner shapes, param counts, RoPE, losses, ONNX export (14 tests)
 │   ├── test_pipeline.py          Stage-3 functions: readout convention, gate degeneracy table, PnP/IPPE (9 tests)
 │   └── test_trainutil.py          EMA, checkpoint round-trip, param groups, JSONL logger (7 tests)
 └── docs/
@@ -54,7 +55,7 @@ Conv-ChArT/
     └── TOOLING.md            full CLI reference: every flag, every output artifact, gates and exit codes
 ```
 
-The tools write their outputs to gitignored directories created on demand: `runs/<name>/` (training: `metrics.jsonl`, checkpoints with a config snapshot inside, preflight reports), `audit/` (acceptance-gate report and distribution plots), `sheets/` (viewer/audit overlay sheets), and `introspect_out/` (introspection panels). None of these are part of the repository.
+The tools write their outputs to gitignored directories created on demand: `runs/<name>/` (training: `metrics.jsonl`, checkpoints with a config snapshot inside), `audit/` (acceptance-gate report and distribution plots), `sheets/` (viewer/audit overlay sheets), and `introspect_out/` (introspection panels). None of these are part of the repository.
 
 ---
 
@@ -85,28 +86,23 @@ PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/view.py --stream r
 PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/audit.py --config configs/default.yaml --out audit/
 ```
 
-**3. Preflight sanity pass** (seven checks against a freshly constructed, untrained model/refiner pair — initial-loss prediction, translation equivariance, RoPE relativity/no-alias, gradient balance, refiner zero-offset closure, bf16 parity, and one-batch overfit; see `docs/TOOLING.md` for the full reference) ahead of any real multi-hour run:
-```
-PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/preflight.py --config configs/default.yaml
-```
-
-**4. Train the detector** (Stage 1; `runs/<name>/{metrics.jsonl, ckpt_*.pt}`; needs a CUDA GPU with the flash/mem-efficient SDPA backend):
+**3. Train the detector** (Stage 1; `runs/<name>/{metrics.jsonl, ckpt_*.pt}`; needs a CUDA GPU with the flash/mem-efficient SDPA backend):
 ```
 PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/train_detector.py --config configs/default.yaml --name run1
 ```
 Retarget an already-trained trunk onto a differently-labelled board's corpus with `--freeze-trunk --resume runs/run1/ckpt_XXXXXXX.pt` — see the `freeze_trunk` note in Conventions for the mechanism; this path is correctly implemented (see `docs/TOOLING.md`) but has not yet been exercised end-to-end against a second physical board. Retargeting onto a board with a *different corner count* (a different `squares`/`dictionary`) uses `--retarget-from` instead of `--resume` — see "Adapting to a new board" below.
 
-**5. Train the refiner** (Stage 2, separate run and checkpoint, board-agnostic):
+**4. Train the refiner** (Stage 2, separate run and checkpoint, board-agnostic):
 ```
 PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/train_refiner.py --config configs/default.yaml --name run1
 ```
 
-**6. Introspect a checkpoint** (six presentation-grade panels: pipeline, 3D heatmap, attention, gates, ERF, encoder features — omit `--ckpt`/`--refiner-ckpt` for an untrained-network baseline):
+**5. Introspect a checkpoint** (six presentation-grade panels: pipeline, 3D heatmap, attention, gates, ERF, encoder features — omit `--ckpt`/`--refiner-ckpt` for an untrained-network baseline):
 ```
 PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/introspect.py --ckpt runs/run1/ckpt_0250000.pt --refiner-ckpt runs/run1_refiner/ckpt_0010000.pt --index 7 --out introspect_out/
 ```
 
-**7. Evaluate.** *Pending — a dedicated evaluation tool (`tools/eval.py`, `tools/curves.py`, M-01..M-06 vs a checkpoint + the sign-off PASS/FAIL line) has not been started; neither file exists on disk yet.* Until it lands, per-checkpoint M-01/M-02/M-04 numbers are available from `train_detector.py`'s own in-loop validation (`runs/<name>/metrics.jsonl`, `val`/`full_val` records), and M-03/bias-vs-jitter from `train_refiner.py`'s.
+**6. Evaluate.** *Pending — a dedicated evaluation tool (`tools/eval.py`, `tools/curves.py`, M-01..M-06 vs a checkpoint + the sign-off PASS/FAIL line) has not been started; neither file exists on disk yet.* Until it lands, per-checkpoint M-01/M-02/M-04 numbers are available from `train_detector.py`'s own in-loop validation (`runs/<name>/metrics.jsonl`, `val`/`full_val` records), and M-03/bias-vs-jitter from `train_refiner.py`'s.
 
 ---
 
@@ -204,17 +200,17 @@ PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/train_detector.py 
 
 ## Testing
 
-Five files, 49 tests, pure-pytest (no COCO or GPU download dependency for the suite itself — `test_generator.py`'s fixtures synthesise their own tiny noise backgrounds and a 3-file synthetic cutout bank; `test_model.py`'s ONNX/RoPE/loss tests and `test_pipeline.py` run on CPU).
+Five files, 56 tests, pure-pytest (no COCO or GPU download dependency for the suite itself — `test_generator.py`'s fixtures synthesise their own tiny noise backgrounds and a 3-file synthetic cutout bank; `test_model.py`'s ONNX/RoPE/loss tests and `test_pipeline.py` run on CPU).
 
 | File | Tests | Locks | Measured runtime |
 |---|---|---|---|
 | `test_synth.py` | 7 | Board convention (analytic corner formula ≤0.05 px vs `cornerSubPix`, marker identity ≤1.5 px), target renderers (heatmap/class Y=1 forcing, max-not-sum combine, refiner offset encoding, edge-window clipping). | 0.16 s |
-| `test_generator.py` | 15 | Full composite pipeline: warp round-trip <0.01 px, perspective calibration against an independently-built pinhole model, visibility truth table (hole/frame edges), corner-index invariance under 180° rotation, negative-sample emptiness, refiner stream + content check, byte-identical determinism, val-set stratification, and 4 object-cutout tests (visibility, RNG-budget discipline, determinism, record-schema stability). | **≈226 s** — dominated by `test_val_stratification`'s 1,000 sequential single-process samples at the current native 1600×1200 `input_size` (this loop pre-dates the 640×480→native migration and was not re-timed after it; ~15 s at the old resolution). |
-| `test_model.py` | 11 | `DetectorNet`/`Refiner` shapes, native-res param count (7,124,700 ± 2%), bias initialisation (−2.19 heads, gate pass-through 0.953), stable `state_dict` key/prefix contract, RoPE no-global-alias (analytic + 2,000-pair sampled check), loss finiteness on $N{=}0$ batches under fp32 and bf16, forward determinism, ONNX opset-17 export (no `Complex`/`Loop`/`If` ops), gate/attention gradient flow. | 4.23 s |
+| `test_generator.py` | 19 | Full composite pipeline: warp round-trip <0.01 px, perspective calibration against an independently-built pinhole model, visibility truth table (hole/frame edges), corner-index invariance under 180° rotation, negative-sample emptiness, refiner stream + content check, byte-identical determinism, val-set stratification, and 4 object-cutout tests (visibility, RNG-budget discipline, determinism, record-schema stability). | **≈226 s** — dominated by `test_val_stratification`'s 1,000 sequential single-process samples at the current native 1600×1200 `input_size` (this loop pre-dates the 640×480→native migration and was not re-timed after it; ~15 s at the old resolution). |
+| `test_model.py` | 14 | `DetectorNet`/`Refiner` shapes, native-res param count (7,124,700 ± 2%), bias initialisation (−2.19 heads, gate pass-through 0.953), stable `state_dict` key/prefix contract, RoPE no-global-alias (analytic + 2,000-pair sampled check), loss finiteness on $N{=}0$ batches under fp32 and bf16, forward determinism, ONNX opset-17 export (no `Complex`/`Loop`/`If` ops), gate/attention gradient flow. | 4.23 s |
 | `test_pipeline.py` | 9 | Stage-3 functions: ID-readout convention (locks `align_corners=False` against a crafted counter-example), peak extraction + NMS merge + `top_k`, border-bypass crop cutting (byte-verified content, $\rho\in\{1,2.5\}$), soft-argmax orientation and accuracy, undistort identity, lattice-gate degeneracy table (too-few / collinear / vacuous / demotion / recovery / no-double-claim), PnP/IPPE (rotation/translation accuracy, ambiguity flag, the silently-empty-solver-result no-pose outcome), and an untrained end-to-end `detect()` contract check. | 1.31 s |
 | `test_trainutil.py` | 7 | Cosine LR shape (warmup/decay/floor monotonicity), EMA convergence, checkpoint round-trip (bit-exact model/EMA/optimiser/RNG restore), `restore_optim=False` retarget path, param-group bias/norm exclusion (twice: default and pre-frozen params), JSONL logger. | 1.23 s |
 
-**Full suite**: `PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python -m pytest tests/ -q` → **49 passed in ≈231 s** (verified live; almost entirely `test_val_stratification`'s wall-clock, see above).
+**Full suite**: `PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python -m pytest tests/ -q` → **56 passed in ≈464 s** (verified live from a clean checkout of the published tree only; almost entirely `test_val_stratification`'s wall-clock, see above).
 
 ---
 

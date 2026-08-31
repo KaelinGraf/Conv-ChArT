@@ -2,7 +2,45 @@
 
 Full CLI reference for every script under `tools/`. All commands assume `cwd = dense deep charuco/` (quote the space), the `MLWS` conda environment, and `PYTHONPATH=` cleared (see the root `README.md`'s Environment section for why both matter). Every tool inserts the project root onto `sys.path[0]` itself and must be invoked as a script — `python tools/<name>.py ...` — never `import tools.*` or `python -m tools.<name>` (the machine-wide `tools`-package shadow from an unrelated `detectron2` checkout). Argparse in every tool runs before any heavy import, so `--help` never needs `dcc`/`numpy`/`cv2`/`torch`/`matplotlib` and is safe to run in any environment with a bare Python 3.
 
-Eight tools exist on disk. `tools/eval.py` and `tools/curves.py` (M-01..M-06 sign-off evaluation and a metrics-to-PNG curve plotter) are **pending** — neither file exists yet.
+Seven tools ship in this repository. `tools/eval.py` and `tools/curves.py` (M-01..M-06 sign-off evaluation and a metrics-to-PNG curve plotter) are **pending** — neither file exists yet.
+
+---
+
+## Release checkpoints
+
+Three detector tiers are released, all trained to a matched 100,000 steps on the same generator
+revision, plus **one refiner shared by all three**. They differ in width and in class-head
+supervision; the pipeline, decode chain and conventions are identical.
+
+| tier | detector checkpoint | params | p95 (px) | M-04 |
+|---|---|---|---|---|
+| **882k — accuracy-first, the reference model** | `runs/rel_w882_c2_100k_rev6/ckpt_0100000.pt` | 882,402 | 0.673 | 99.53% |
+| 502k — balanced | `runs/rel_w375_lam15_100k_rev6/ckpt_0100000.pt` | 502,322 | 0.689 | 99.41% |
+| 222k — smallest | `runs/rel_w25_lam2_100k_rev6/ckpt_0100000.pt` | 222,138 | 0.734 | 99.09% |
+
+Refiner (all tiers): `runs/ref_s15_10k_rev6/ckpt_0010000.pt`, 97,056 params, 10,000 steps.
+
+**Deploy the 882k tier unless you have a reason not to.** It is the reference architecture, wins on
+every metric, and holds a 4× smaller >4 px tail than the 222k tier.
+
+**Two deployment cautions, both measured:**
+
+- **The 222k tier collapses in low light** — 5.6% recall at the most severe darkness step, against
+  37.3% (502k) and 45.8% (882k). That is a cliff, not a graceful decline, and it is invisible in
+  clean-validation numbers. Do not ship it where ambient light can drop.
+- **Quantise the detector, not the refiner.** In fp16 the refiner accounts for the entire sub-pixel
+  displacement tail (41 of 44 corners displaced beyond 0.05 px) and the detector for none of it.
+  Keeping the 97k-param refiner at full precision while the detector runs fp16 reduces the
+  displaced fraction from ~0.85% to 0.008–0.067%. Uniform fp16 across both networks fails the
+  acceptance criterion at every tier.
+
+Each checkpoint carries its own `cfg` snapshot, so build the network from the checkpoint rather
+than from a config file — the tiers differ in `width_mult`, `xsa` and class-head loss form, and a
+config/checkpoint mismatch either raises a shape error or silently scores the wrong architecture.
+
+> **Note.** `configs/default.yaml` is the generator/training default, **not** any released
+> architecture. The checkpoints above are not distributed in this repository (`*.pt` is
+> gitignored).
 
 ---
 
@@ -158,32 +196,6 @@ tools/gen_cutouts.py [-h] [--coco COCO] [--out OUT] [--ckpt CKPT] [--sam-config 
 - `{out}/manifest.json` — the run's `params`, `n_images_swept`, `n_cutouts`, the sorted `files` list, and a `files_sha1` of that list.
 
 **Operational notes.** ~1–2 s/image on an RTX 5090 (SAM2 automatic mask generation), so a full 3,000-image sweep takes roughly 1–1.5 h; smoke-test with a small `--n-images` first. Exits 1 if `--out` is non-empty without `--force`, or if CUDA is unavailable (`SAM2AutomaticMaskGenerator` requires a GPU). **The default sweep has run to completion on this machine**: `/home/kaelin/datasets/cutouts` holds $14{,}721$ RGBA cutout files from the full $3{,}000$-image sweep (`n_images_swept: 3000` in `manifest.json`), with the manifest fully self-consistent against the directory contents (every listed file present, zero missing) — averaging $\approx4.9$ cutouts per swept image. `dcc.synth.load_cutouts` still returns `[]` for a missing or partial bank directory and `synth.cutouts.p` remains a no-op in that case (every other tool, test, and training run proceeds correctly without object-cutout occlusion), but that fallback is no longer the operative case here.
-
----
-
-## `tools/preflight.py` — pre-training verification suite
-
-**Purpose.** A mandatory sanity pass to run before every long training run (including every ablation): proves a freshly constructed, untrained `DetectorNet`/`Refiner` pair's numerical behaviour matches the design's own init-time invariants, and that the full data→targets→loss→optimiser→heatmap→peaks→readout→gate loop can express a known answer — in minutes, catching a wiring defect that would otherwise only surface hours into a wasted multi-day run. Argparse runs before any heavy import, so `--help` never needs `torch`/`dcc`/`cv2`.
-
-**Usage**
-```
-tools/preflight.py [-h] [--config CONFIG] [--out OUT] [--quick] [--device {cuda,cpu}]
-```
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--config` | `configs/default.yaml` | Config to check against. |
-| `--out` | — | Report output location. |
-| `--quick` | off | Skip the one-batch-overfit check (the sole check that actually trains the pair in place; every other check is a pure init-time characterisation — no weights are ever updated, since backward populates `.grad` but no optimiser `.step()` is ever taken outside this one check). |
-| `--device` | `cuda` if available | `cuda` or `cpu`. |
-
-**The seven checks**, each targeting one specific failure mode named in this project's own pre-flight verification discipline (`tools/preflight.py`, and
-`docs/PROJECT_KNOWLEDGE.md` §5): predicted-vs-observed initial loss, translation equivariance of the attention module, RoPE relativity/no-global-alias, gradient balance across the heatmap/class/attention/gate paths, the refiner's zero-offset readout closure, bf16-vs-fp32 numerical parity, and — the one check that actually trains the pair, run last regardless of its position above, and the only one `--quick` skips — one-batch overfit capability. Off-CUDA, the one-batch-overfit check is unconditionally skipped (it is not meaningful without the training precision path this system targets) and the bf16-parity check is attempted and gracefully warns rather than fails on any exception, since bf16 semantics are itself a CUDA/Tensor-Core concern.
-
-**Example**
-```
-PYTHONPATH= /home/kaelin/anaconda3/envs/MLWS/bin/python tools/preflight.py --config configs/default.yaml --out preflight_report.json
-```
 
 ---
 

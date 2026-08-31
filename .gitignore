@@ -22,23 +22,8 @@ eval_pose*/
 # solely to score baselines for the paper, so it ships with the paper, not
 # with the method. The vendored upstream lives outside this repo entirely
 # (/home/kaelin/p4p/external/deepcharuco).
-tools/charuconet.py
-tools/train_charuconet.py
-tools/eval_classical.py
-tools/factor_sweep.py
-tools/plot_figures.py
-tools/inversion_audit.py
-tools/polarity_invariance.py
-tools/cross_eval.py
-tests/test_eval_classical.py
-tests/test_factor_sweep.py
-tests/test_plot_figures.py
-tests/test_cross_eval.py
 eval_classical/
 factor_sweep*/
-tools/robustness_sweep_dc.py
-tools/filmstrip_lighting.py
-tools/eval_pose_fourway.py
 
 # ---------------------------------------------------------------------------
 # 2026-07-30: keep the PUBLIC tree to the METHOD -- the model, the data
@@ -59,39 +44,10 @@ CLAUDE.md
 # (queue supervision, boot self-heal, thermal/stall watchdog). Hardcodes
 # absolute paths, core masks and this box's failure history; useless and
 # misleading anywhere else.
-tools/queue_ablations.sh
-tools/launch_composite.sh
-tools/resume_after_boot.sh
-tools/watch_trainers.sh
-tools/wait_trainer_exit.sh
 
 # EVALUATION AND SWEEPS: produce the paper's numbers, not the method
-tools/robustness_sweep.py
-tools/eval_pose_ours.py
-tools/eval_uncertainty.py
-tools/calibrate_uncertainty.py
-tools/refiner_gain.py
-tools/refiner_crop_scale.py
-tools/refiner_err_vs_offset.py
-tools/refiner_id_effect.py
-tools/refiner_failure_gallery.py
-tools/ablation_summary.py
-tools/snr_calibration.py
-tools/working_range.py
-tools/find_attention_frames.py
-tools/attention_head_roles.py
-tools/gate_formula.py
 
 # FIGURE AND DOCUMENT PRODUCTION: renders the deck/paper, not the model
-tools/plot_four_way.py
-tools/plot_ablation.py
-tools/plot_robustness.py
-tools/make_tables.py
-tools/pose_table_pdf.py
-tools/cost_table_pdf.py
-tools/loss_explainer_pdf.py
-tools/loss_target_figure.py
-tools/sample_board.py
 
 # ABLATION CONFIGS: the experiment record, not the shipped models. The two
 # models this repo ships (Conv-ChArT, Conv-ChArT-FAST), their XSA variants,
@@ -101,14 +57,8 @@ tools/sample_board.py
 # now generates arms continuously via tools/cut_ablation.py, and a deny-list silently leaks every
 # arm nobody remembered to add. Default-deny with named exceptions is the only version that stays
 # correct as arms accumulate: to SHIP a config, name it below; everything else is experiment record.
-configs/abl_*.yaml
-!configs/abl_nodilate_width_half_s05.yaml
-!configs/abl_nodilate_width_half_xsa_s05.yaml
-!configs/abl_nodilate_width_quarter_s05.yaml
-!configs/abl_nodilate_width_quarter_xsa_s05.yaml
 
 # ABLATION TOOLING: cuts and verifies experiment configs. Useless once the arms are chosen.
-tools/cut_ablation.py
 
 # figures/ is DELIBERATELY NOT IGNORED: paper/ is, so the conference
 # deliverables (headline panel, pose table, cost table, architecture) are
@@ -119,3 +69,38 @@ tools/cut_ablation.py
 # they are not retrievable from an earlier commit either. Ignored here so a
 # later `git add -A` cannot quietly put them back.
 figures/
+
+# ---------------------------------------------------------------------------
+# PUBLIC TREE = DEFAULT-DENY (2026-08-31). The remote carries the METHOD only:
+# the library, the four entry points needed to generate data / train / inspect,
+# the conventions tests, and the deployment docs. Everything else -- evaluation
+# and sweep tooling, figure and paper production, baseline arms, ablation
+# configs, machine-specific operations -- is real work that lives locally and
+# ships with the paper, not with the method.
+#
+# Default-deny with named exceptions, not a deny-list: a deny-list silently
+# leaks every new file nobody remembered to add. To PUBLISH a file, name it.
+# ---------------------------------------------------------------------------
+configs/*
+!configs/default.yaml
+
+tools/*
+!tools/audit.py
+!tools/view.py
+!tools/gen_eval_pose.py
+!tools/gen_cutouts.py
+!tools/train_detector.py
+!tools/train_refiner.py
+!tools/introspect.py
+
+tests/*
+!tests/test_synth.py
+!tests/test_generator.py
+!tests/test_model.py
+!tests/test_pipeline.py
+!tests/test_trainutil.py
+
+docs/*
+!docs/ARCHITECTURE.md
+!docs/architecture.svg
+!docs/TOOLING.md

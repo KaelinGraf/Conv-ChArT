@@ -25,7 +25,7 @@
 
   <rect x="0" y="0" width="1520" height="900" fill="#ffffff"/>
   <text x="760" y="30" text-anchor="middle" font-size="17" fill="#222222" font-weight="bold">Conv-ChArT detector — hybrid convolutional–transformer architecture</text>
-  <text x="760" y="46" text-anchor="middle" font-size="11" fill="#666666" font-style="italic">attend_div=8 · 640×480 · channels read Conv-ChArT / Conv-ChArT-FAST (width 0.5 / 0.25) · 882,402 / 222,138 detector params + 97,056 shared refiner</text>
+  <text x="760" y="46" text-anchor="middle" font-size="11" fill="#666666" font-style="italic">attend_div=8 · 640×480 · channels read at width 0.5 / 0.375 / 0.25 · 882,402 / 502,322 / 222,138 detector params + 97,056 shared refiner</text>
 
   <!-- input -->
   <rect x="90" y="42" width="200" height="24" rx="4" fill="#f2f2f2" stroke="#999999"/>
@@ -42,13 +42,13 @@
   </g>
   <g font-size="12.5" fill="#1d3d63" text-anchor="middle">
     <text x="190" y="103" font-weight="bold">e1 · [conv3×3 + BN + ReLU] ×2</text>
-    <text x="190" y="121" font-size="11" fill="#44618a">H × W · 16/8 ch</text>
+    <text x="190" y="121" font-size="11" fill="#44618a">H × W · 16/16/8 ch</text>
     <text x="190" y="201" font-weight="bold">e2 · [conv3×3 + BN + ReLU] ×2</text>
-    <text x="190" y="219" font-size="11" fill="#44618a">H/2 · 32/16 ch</text>
+    <text x="190" y="219" font-size="11" fill="#44618a">H/2 · 32/24/16 ch</text>
     <text x="190" y="299" font-weight="bold">e3 · [conv3×3 + BN + ReLU] ×2</text>
-    <text x="190" y="317" font-size="11" fill="#44618a">H/4 · 64/32 ch</text>
+    <text x="190" y="317" font-size="11" fill="#44618a">H/4 · 64/48/32 ch</text>
     <text x="190" y="397" font-weight="bold">e4 · [conv3×3 + BN + ReLU] ×2</text>
-    <text x="190" y="415" font-size="11" fill="#44618a">H/8 · 128/64 ch</text>
+    <text x="190" y="415" font-size="11" fill="#44618a">H/8 · 128/96/64 ch</text>
   </g>
   <!-- encoder downsampling arrows -->
   <g stroke="#555555" stroke-width="1.6">
@@ -95,7 +95,7 @@
   <circle cx="738" cy="457" r="10" fill="#ffffff" stroke="#4b3573" stroke-width="1.4"/>
   <text x="738" y="461.5" text-anchor="middle" font-size="12" fill="#4b3573">+</text>
 
-  <text x="590" y="494" text-anchor="middle" font-size="10" fill="#6a5a8e">tokens (attend_div=8) = H/8 grid = 80 × 60 = 4 800 · d = 128/64</text>
+  <text x="590" y="494" text-anchor="middle" font-size="10" fill="#6a5a8e">tokens (attend_div=8) = H/8 grid = 80 × 60 = 4 800 · d = 128/96/64</text>
 
   <!-- epilogue LN: applied ONCE after the ×2 loop (self.norm), not part of either block above -->
   <line x1="748" y1="457" x2="810" y2="457" stroke="#4b3573" stroke-width="1.4" marker-end="url(#aPurple)"/>
@@ -147,11 +147,11 @@
   </g>
   <g font-size="12.5" fill="#1d3d63" text-anchor="middle">
     <text x="1080" y="103" font-weight="bold">d1 · conv3×3 + BN + ReLU</text>
-    <text x="1080" y="121" font-size="11" fill="#44618a">H × W · 16/8 ch</text>
+    <text x="1080" y="121" font-size="11" fill="#44618a">H × W · 16/16/8 ch</text>
     <text x="1080" y="201" font-weight="bold">d2 · conv3×3 + BN + ReLU</text>
-    <text x="1080" y="219" font-size="11" fill="#44618a">H/2 · 32/16 ch</text>
+    <text x="1080" y="219" font-size="11" fill="#44618a">H/2 · 32/24/16 ch</text>
     <text x="1080" y="299" font-weight="bold">d3 · conv3×3 + BN + ReLU</text>
-    <text x="1080" y="317" font-size="11" fill="#44618a">H/4 · 64/32 ch</text>
+    <text x="1080" y="317" font-size="11" fill="#44618a">H/4 · 64/48/32 ch</text>
   </g>
   <!-- concat -> decoder block -->
   <g stroke="#333333" stroke-width="1.6">
@@ -177,7 +177,7 @@
 
   <line x1="1180" y1="305" x2="1250" y2="305" stroke="#2E8B74" stroke-width="1.8" marker-end="url(#aTeal)"/>
   <rect x="1250" y="276" width="240" height="58" rx="6" fill="#d9efe8" stroke="#2E8B74" stroke-width="1.8"/>
-  <text x="1370" y="299" text-anchor="middle" font-size="12.5" fill="#1c5747" font-weight="bold">class head · conv3×3(64/32) → 1×1</text>
+  <text x="1370" y="299" text-anchor="middle" font-size="12.5" fill="#1c5747" font-weight="bold">class head · conv3×3(64/48/32) → 1×1</text>
   <text x="1370" y="317" text-anchor="middle" font-size="11" fill="#2e7361">corner IDs · 16 × H/4 × W/4 · σ</text>
 
 
@@ -187,7 +187,7 @@
   <rect x="78" y="668" width="34" height="18" rx="3" fill="#dbe9f6" stroke="#4C72B0" stroke-width="1.4"/>
   <text x="122" y="682" font-size="11" fill="#333333">conv stage (blue): encoder ×2, decoder ×1 per box's own label</text>
   <rect x="78" y="694" width="34" height="18" rx="3" fill="#efe9f8" stroke="#7B5EA7" stroke-width="1.4"/>
-  <text x="122" y="708" font-size="11" fill="#333333">transformer block: pre-norm MHSA+MLP, 2D axial RoPE on q,k · *XSA: FAST only, parameter-free</text>
+  <text x="122" y="708" font-size="11" fill="#333333">transformer block: pre-norm MHSA+MLP, 2D axial RoPE on q,k · *XSA: 222k only, parameter-free</text>
   <rect x="78" y="720" width="34" height="18" rx="3" fill="#fff2cc" stroke="#D8A400" stroke-width="1.4"/>
   <text x="122" y="734" font-size="11" fill="#333333">attention gate: α = σ(ψᵀ ReLU(Wₓx + W_g g)), pass-through init α₀ ≈ 0.95</text>
   <line x1="78" y1="756" x2="110" y2="756" stroke="#555555" stroke-width="1.8" marker-end="url(#aGray)"/>

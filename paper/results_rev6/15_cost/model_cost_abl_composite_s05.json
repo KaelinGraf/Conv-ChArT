@@ -1,0 +1,76 @@
+{
+  "input_size": [
+    640,
+    480
+  ],
+  "crops_per_frame": 16,
+  "stages": [
+    "pool",
+    "e1",
+    "e2",
+    "e3",
+    "e4",
+    "rope",
+    "blocks",
+    "norm",
+    "gate3",
+    "d3",
+    "d2",
+    "d1",
+    "hm",
+    "cls"
+  ],
+  "latency_contended": true,
+  "other_gpu_procs": [
+    "166372, 12036 MiB",
+    "167180, 8906 MiB"
+  ],
+  "params": {
+    "detector": 3517362,
+    "refiner": 97056,
+    "total": 3614418,
+    "attention_blocks": 1580032,
+    "e4": 885760,
+    "gates": 24705
+  },
+  "macs": {
+    "detector": 78112665600.0,
+    "refiner_all_crops": 554205184.0,
+    "total_G": 78.666870784,
+    "total_GFLOPs": 157.333741568
+  },
+  "measured_5090_fp16_ms": {
+    "detector": 10.097575378417968,
+    "refiner": 0.21166400909423827,
+    "total": 10.309239387512207,
+    "fps": 97.00036660428319
+  },
+  "orin_estimate": {
+    "optimistic": {
+      "sustained_frac": 0.3,
+      "compute_bound_ms": 7.628302621478788,
+      "fps": 131.09076155216093
+    },
+    "conservative": {
+      "sustained_frac": 0.15,
+      "compute_bound_ms": 15.256605242957576,
+      "fps": 65.54538077608046
+    },
+    "int8_optimistic": {
+      "sustained_frac": 0.3,
+      "compute_bound_ms": 3.814151310739394,
+      "fps": 262.18152310432185
+    },
+    "int8_conservative": {
+      "sustained_frac": 0.15,
+      "compute_bound_ms": 7.628302621478788,
+      "fps": 131.09076155216093
+    },
+    "bandwidth_floor_ms": 0.03529705078125
+  },
+  "orin_spec": {
+    "fp16_tflops_peak": 68.75,
+    "int8_tops_peak": 137.5,
+    "bw_gbps": 204.8
+  }
+}

@@ -1,0 +1,8 @@
+
+[detector] ckpt=paper/results_rev6/29_multiboard_base/diag_step14k/ckpt_latest_copy.pt step=14000 config=configs/mb15_eval_5X5_1000_12.yaml n=200 synth_hash=8e1ec582c99d
+  val_loss=2.7320747327804566
+  M-01: mean=0.428px median=0.414px p95=0.755px tail_frac_gt4px=0.0000 n_matched=2321
+  M-02 by octave: {'12-16': 0.9030303030303031, '16-32': 0.9237187127532777, '32-64': 0.9120111731843575, '64-128': 0.9612277867528272}
+  M-04: accuracy=0.2520 by_octave={'12-16': 0.25838926174496646, '16-32': 0.26064516129032256, '32-64': 0.25880551301684535, '64-128': 0.23025210084033612}
+
+wrote paper/results_rev6/29_multiboard_base/diag_step14k/perboard_5X5_1000_12.json

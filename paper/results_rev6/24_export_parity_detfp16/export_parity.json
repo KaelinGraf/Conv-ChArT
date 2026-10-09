@@ -1,0 +1,100 @@
+{
+  "gate": "P15 fp16 export parity",
+  "device": "cuda",
+  "n_val": 1000,
+  "refiner_ckpt": "runs/ref_s15_10k_rev6/ckpt_0010000.pt",
+  "thresholds": {
+    "d_corner_px": 0.05,
+    "id_diff_pct": 0.1
+  },
+  "half": "detector",
+  "onnx_runtime_check": "NOT RUN -- onnxruntime absent from the MLWS env; this gate covers export validity and fp16 numerics only",
+  "tiers": {
+    "222k": {
+      "ckpt": "runs/rel_w25_lam2_100k_rev6/ckpt_0100000.pt",
+      "step": 100000,
+      "config_input_size": [
+        640,
+        480
+      ],
+      "n_params": 222138,
+      "parity_fp16": {
+        "n_images": 1000,
+        "n_corners_fp32": 11949,
+        "n_corners_fp16": 11948,
+        "n_matched": 11943,
+        "unmatched_fp32": 6,
+        "unidentified_fp32": 424,
+        "unidentified_fp16": 427,
+        "n_gt_0p05px": 8,
+        "n_gt_1px": 0,
+        "frac_gt_0p05px_pct": 0.0669848446788914,
+        "d_corner_mean": 0.000669848738360109,
+        "d_corner_p95": 0.0,
+        "d_corner_max": 1.0,
+        "id_diff_pct": 0.1004772670183371,
+        "corner_count_delta_pct": -0.008368901163277261
+      },
+      "verdict": "FAIL",
+      "failures": [
+        "ID 0.1005% >= 0.1%"
+      ]
+    },
+    "502k": {
+      "ckpt": "runs/rel_w375_lam15_100k_rev6/ckpt_0100000.pt",
+      "step": 100000,
+      "config_input_size": [
+        640,
+        480
+      ],
+      "n_params": 502322,
+      "parity_fp16": {
+        "n_images": 1000,
+        "n_corners_fp32": 12130,
+        "n_corners_fp16": 12132,
+        "n_matched": 12130,
+        "unmatched_fp32": 0,
+        "unidentified_fp32": 269,
+        "unidentified_fp16": 269,
+        "n_gt_0p05px": 1,
+        "n_gt_1px": 0,
+        "frac_gt_0p05px_pct": 0.008244023083264633,
+        "d_corner_mean": 8.244058462773486e-05,
+        "d_corner_p95": 0.0,
+        "d_corner_max": 1.0,
+        "id_diff_pct": 0.0,
+        "corner_count_delta_pct": 0.016488046166529265
+      },
+      "verdict": "PASS",
+      "failures": []
+    },
+    "882k": {
+      "ckpt": "runs/rel_w882_c2_100k_rev6/ckpt_0100000.pt",
+      "step": 100000,
+      "config_input_size": [
+        640,
+        480
+      ],
+      "n_params": 882402,
+      "parity_fp16": {
+        "n_images": 1000,
+        "n_corners_fp32": 12222,
+        "n_corners_fp16": 12222,
+        "n_matched": 12222,
+        "unmatched_fp32": 0,
+        "unidentified_fp32": 101,
+        "unidentified_fp16": 103,
+        "n_gt_0p05px": 5,
+        "n_gt_1px": 0,
+        "frac_gt_0p05px_pct": 0.040909834724267714,
+        "d_corner_mean": 0.0004090987403735427,
+        "d_corner_p95": 0.0,
+        "d_corner_max": 1.0,
+        "id_diff_pct": 0.016363933889707086,
+        "corner_count_delta_pct": 0.0
+      },
+      "verdict": "PASS",
+      "failures": []
+    }
+  }
+}

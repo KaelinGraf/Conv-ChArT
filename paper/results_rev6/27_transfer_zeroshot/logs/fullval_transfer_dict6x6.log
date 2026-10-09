@@ -1,0 +1,9 @@
+
+[detector] ckpt=runs/rel_w882_c2_100k_rev6/ckpt_0100000.pt step=100000 config=configs/transfer_dict6x6.yaml n=10000 synth_hash=8e1ec582c99d
+  val_loss=6.244085524368286
+  M-01: mean=0.407px median=0.406px p95=0.675px tail_frac_gt4px=0.0001 n_matched=123965
+  M-02 by octave: {'12-16': 0.919434748339151, '16-32': 0.9396811106636026, '32-64': 0.9547243594626851, '64-128': 0.9570519284093774}
+  M-04: accuracy=0.1336 by_octave={'12-16': 0.09472781825975139, '16-32': 0.1502155661447697, '32-64': 0.14341188361083038, '64-128': 0.12050176143285155}
+
+wrote paper/results_rev6/27_transfer_zeroshot/fullval_transfer_dict6x6.json
+exit 0

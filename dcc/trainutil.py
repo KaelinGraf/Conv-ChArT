@@ -212,20 +212,42 @@ def load_retarget_ckpt(path, model, map_location=None):
     return ckpt
 
 
-def param_groups(model, wd):
-    """Two AdamW param groups: zero weight decay on any bias parameter or
-    any parameter owned by a norm module (LayerNorm/BatchNorm*/GroupNorm),
-    full `wd` on everything else. Parameters with requires_grad=False (e.g.
-    a frozen trunk) are excluded entirely, so this also doubles as "build an
-    optimizer over the currently-trainable params only"."""
+def param_groups(model, wd, lr_mult=None):
+    """AdamW param groups: zero weight decay on any bias parameter or any parameter owned by a
+    norm module (LayerNorm/BatchNorm*/GroupNorm), full `wd` on everything else. Parameters with
+    requires_grad=False (e.g. a frozen trunk) are excluded entirely, so this also doubles as
+    "build an optimizer over the currently-trainable params only".
+
+    lr_mult (fine-tuning, 2026-10-08): {fnmatch pattern on the parameter name: multiplier}. When
+    given it DECIDES trainability: a parameter trains iff it matches a pattern (first match wins,
+    in dict order) with a multiplier > 0, and requires_grad is set accordingly so frozen weights
+    hold no grad and no optimizer state. Each group carries its `lr_mult`; the trainer multiplies
+    the scheduled LR by it. Every pattern must match at least one parameter -- a typo would
+    otherwise silently freeze the part it named. Without lr_mult the return is exactly the
+    historical [decay, no_decay] pair."""
+    import fnmatch
     no_decay_ids = {id(p) for m in model.modules() if isinstance(m, _NORM_TYPES)
                      for p in m.parameters(recurse=False)}
-    decay, no_decay = [], []
+    groups, matched = {}, set()
     for name, p in model.named_parameters():
+        mult = 1.0
+        if lr_mult is not None:
+            hit = next((pat for pat in lr_mult if fnmatch.fnmatchcase(name, pat)), None)
+            mult = float(lr_mult[hit]) if hit is not None else 0.0
+            p.requires_grad_(mult > 0)
+            if hit is not None:
+                matched.add(hit)
         if not p.requires_grad:
             continue
-        (no_decay if name.endswith(".bias") or id(p) in no_decay_ids else decay).append(p)
-    return [{"params": decay, "weight_decay": wd}, {"params": no_decay, "weight_decay": 0.0}]
+        no_decay = name.endswith(".bias") or id(p) in no_decay_ids
+        groups.setdefault((mult, no_decay), []).append(p)
+    if lr_mult is None:
+        return [{"params": groups.get((1.0, False), []), "weight_decay": wd},
+                {"params": groups.get((1.0, True), []), "weight_decay": 0.0}]
+    unmatched = set(lr_mult) - matched
+    assert not unmatched, f"lr_mult patterns matched no parameter: {sorted(unmatched)}"
+    return [{"params": ps, "weight_decay": 0.0 if nd else wd, "lr_mult": mult}
+            for (mult, nd), ps in sorted(groups.items(), key=lambda kv: (-kv[0][0], kv[0][1]))]
 
 
 def generator_fingerprint(cfg, root):

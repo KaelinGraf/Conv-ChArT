@@ -1,0 +1,9 @@
+
+[detector] ckpt=runs/rel_w882_c2_100k_rev6/ckpt_0100000.pt step=100000 config=configs/abl_c2_wh_clsfocal_lam2.yaml n=10000 synth_hash=8e1ec582c99d
+  val_loss=1.0744027644634246
+  M-01: mean=0.406px median=0.406px p95=0.673px tail_frac_gt4px=0.0000 n_matched=123856
+  M-02 by octave: {'12-16': 0.9173516495890103, '16-32': 0.9402497097775356, '32-64': 0.9530738173230746, '64-128': 0.9560751197378372}
+  M-04: accuracy=0.9953 by_octave={'12-16': 0.9871118203019517, '16-32': 0.9944062287398896, '32-64': 0.9979751152319293, '64-128': 0.9976270516116275}
+
+wrote paper/results_rev6/27_transfer_zeroshot/fullval_control_dict5x5.json
+exit 0

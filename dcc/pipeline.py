@@ -452,25 +452,6 @@ def detect(frame_sensor, model, refiner, K=None, dist=None, cfg=None, id_readout
             rdev = next(refiner.parameters()).device
             rmap = refiner(torch.from_numpy(crops).to(rdev)).sigmoid().cpu()
         u_star, u_spread = soft_argmax(rmap, return_spread=True)
-        # REFINEMENT GUARD (Kaelin, 2026-07-29: "add the guard to not refine on crops
-        # with no valid target"). The refiner's own peak height is its statement that
-        # it found a junction at all; a flat map means the crop carries no sub-pixel
-        # information -- blown out, crushed, or featureless -- and the sub-pixel answer
-        # it returns anyway is noise. Such a corner keeps its coarse peak.
-        #
-        # NOTE this REVERSES the "refiner guard is abandoned" pin in CLAUDE.md, on
-        # Kaelin's explicit instruction and on new evidence. That pin retired a guard
-        # for a tail caused by a TRAINING-DATA GAP, which retraining correctly fixed.
-        # This tail is different in kind: measured 2026-07-29 (n=6421, guard_sweep.py)
-        # the refiner is WORSE than the coarse peak on 16.3% of crops, and those crops
-        # are 55% featureless (std < 15 vs 20% of the rest). No amount of training
-        # recovers a sub-pixel position from a crop that does not contain the corner.
-        #
-        # Threshold swept, not guessed -- peak < 0.3 fires on 13.8% of crops, is right
-        # 69.5% of the time, and takes p95 from 3.011 px to 0.761 px while the median
-        # moves only 0.1014 -> 0.1026. That is better than coarse-only on BOTH axes
-        # (coarse: median 0.4244, p95 0.8449). Image-statistic guards were tested and
-        # all lost to it; sigma_px never fired at any threshold.
         peak = rmap.reshape(rmap.shape[0], -1).amax(dim=1).numpy()
         ok = peak >= cfg.get("refine_min_peak", 0.3)
         sel = idxs[ok]
@@ -482,37 +463,12 @@ def detect(frame_sensor, model, refiner, K=None, dist=None, cfg=None, id_readout
     xy_coarse = (xy_pk + 0.5) / r - 0.5
     xy_sensor[~kept_mask] = xy_coarse[~kept_mask]
 
-    # id_readout: WHERE the class map is sampled. Default "coarse" = the
-    # pre-refinement peak; "refined" = the sub-pixel position (the original
-    # behaviour). These were only ever coupled by accident -- the class map is at
-    # H/4, so ONE CELL IS 4 INPUT PIXELS, and the coarse peak (0.41 px median
-    # error) and the refined one (0.08 px) both land well inside the same cell.
-    # Sub-pixel accuracy carries no information for identity; refinement exists
-    # for geometry. Measured (2026-07-28, tools/refiner_id_effect.py, n=3520):
-    # reading at the refined position cost -1.82 pp of ID accuracy, 73% of it
-    # from corners that still MATCHED but whose p_id jittered under tau_id -- a
-    # hard threshold converting symmetric noise into one-sided loss. Taking
-    # max(p_refined, p_coarse) recovered only part of it (-1.39 pp) because a
-    # more CONFIDENT read is not necessarily a CORRECT one.
     xy_id = xy_coarse if id_readout == "coarse" else xy_sensor
     idx_raw, p_id = read_ids(cls_sigmoid, (xy_id + 0.5) * r - 0.5)
     idx_thr = np.where(p_id >= tau_id, idx_raw, -1)
     K_eff = K if K is not None else np.array([[max(Ws, Hs), 0, (Ws - 1) / 2],
                                                [0, max(Ws, Hs), (Hs - 1) / 2], [0, 0, 1]], dtype=np.float64)
     xy_pinhole = undistort(xy_sensor, K_eff, dist)
-    # THE REFINER IS A LOCALISATION LEVER, NOT AN IDENTITY ONE (Kaelin, 2026-07-29:
-    # "the coarse ID is what SHOULD be taken as the final id ... the identification
-    # should be EXACTLY the same"). Reading the class map coarsely was only half of
-    # that: lattice_gate DEMOTES and recover ASSIGNS on the strength of POSITIONS, so
-    # feeding them refined coords let the refiner rewrite identity through the back
-    # door. Measured 2026-07-28 before this change: 1.34% of per-detection IDs differed
-    # between the arms and ID accuracy on a COMMON matching was 98.209% refined vs
-    # 99.424% coarse -- the refiner's scale-floor tail corrupting the homography fit,
-    # which then demoted corners that were correctly identified. Running the identity
-    # chain on xy_pin_id makes idx_final a function of {xy_pk, cls_sigmoid, K, dist}
-    # alone, none of which the refiner touches, so the two arms are BIT-IDENTICAL in
-    # identity by construction. The fit here is used ONLY for ID recovery; pnp below
-    # re-solves from scratch on the REFINED points and keeps the full sub-pixel gain.
     xy_pin_id = xy_pinhole if (refiner is None or id_readout != "coarse") \
         else undistort(xy_coarse, K_eff, dist)
 

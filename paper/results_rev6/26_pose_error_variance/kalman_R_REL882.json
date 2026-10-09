@@ -1,0 +1,235 @@
+{
+  "source": "paper/results_rev6/26_pose_error_variance/pose_REL882_B1.json (error_cov.unambiguous), 882k release model + shared refiner, eval_pose_rev6_b1 (1000 synthetic frames, square_length_m = 1), unambiguous accepted solves only (filter contract: skip refused AND ambiguous)",
+  "units": "rotation rad^2 (camera-frame small-rotation vector of R_est R_gt^T); translation squares^2 (multiply by square_length_m^2)",
+  "state_order": [
+    "drot_x_rad",
+    "drot_y_rad",
+    "drot_z_rad",
+    "dt_x_sq",
+    "dt_y_sq",
+    "dt_z_sq"
+  ],
+  "n": 893,
+  "R_diag_sample_variance": [
+    2.314013113206056e-05,
+    2.5584634860631775e-05,
+    2.653778250790944e-06,
+    0.00016160365787103195,
+    7.340425597187135e-05,
+    0.001876537122528475
+  ],
+  "R_diag_robust_variance_mad": [
+    2.535604163924956e-06,
+    2.375491237023829e-06,
+    4.0893144919049756e-07,
+    8.448971681086918e-06,
+    7.395385964024224e-06,
+    0.0001340299474984897
+  ],
+  "std_sample_deg_rot_and_sq_trans": [
+    0.2756167074406645,
+    0.289809250686057,
+    0.09333723851292994,
+    0.012712342737317616,
+    0.008567628374986355,
+    0.04331901571513918
+  ],
+  "std_robust_deg_rot_and_sq_trans": [
+    0.09123539582009312,
+    0.08830785761923499,
+    0.03663936077665753,
+    0.002906711489138012,
+    0.002719445892828946,
+    0.01157713036544418
+  ],
+  "full_cov_sample": [
+    [
+      2.314013113206056e-05,
+      3.4894574279568017e-06,
+      9.36212282043015e-07,
+      7.6057436561355e-06,
+      -2.6204135558886838e-06,
+      -2.7242648936870743e-05
+    ],
+    [
+      3.4894574279568017e-06,
+      2.5584634860631758e-05,
+      7.170694438464704e-07,
+      5.0834724624642985e-06,
+      -1.4725172360723545e-06,
+      -4.284864584836336e-05
+    ],
+    [
+      9.36212282043015e-07,
+      7.170694438464704e-07,
+      2.6537782507909454e-06,
+      2.189801030639515e-06,
+      8.970400383148888e-07,
+      -5.216453490325766e-06
+    ],
+    [
+      7.6057436561355e-06,
+      5.0834724624642985e-06,
+      2.189801030639515e-06,
+      0.000161603657871032,
+      2.0196120229556882e-05,
+      0.00012831136403732626
+    ],
+    [
+      -2.6204135558886838e-06,
+      -1.4725172360723545e-06,
+      8.970400383148888e-07,
+      2.0196120229556882e-05,
+      7.340425597187135e-05,
+      3.0312548496255746e-05
+    ],
+    [
+      -2.7242648936870743e-05,
+      -4.284864584836336e-05,
+      -5.216453490325766e-06,
+      0.00012831136403732626,
+      3.0312548496255746e-05,
+      0.001876537122528474
+    ]
+  ],
+  "by_apparent_scale_octave_s_px": {
+    "12-16": {
+      "n": 65,
+      "var_sample": [
+        3.440890086709632e-05,
+        3.7680735185096766e-05,
+        7.445523331865712e-06,
+        0.0010236366404321549,
+        0.0004280097605477909,
+        0.01021990670309975
+      ],
+      "var_robust_mad": [
+        2.1762223975592436e-05,
+        8.973503122716774e-06,
+        3.41397490313445e-06,
+        0.0003273408033542177,
+        0.0001895870345180528,
+        0.005242757220760033
+      ]
+    },
+    "16-32": {
+      "n": 258,
+      "var_sample": [
+        2.9179236215226893e-05,
+        3.331436771800935e-05,
+        4.395796656546005e-06,
+        0.00023680680329512835,
+        0.00011575659825199473,
+        0.002835793709221401
+      ],
+      "var_robust_mad": [
+        6.980322118601223e-06,
+        8.11736643436642e-06,
+        1.3767234434131896e-06,
+        5.0243925155522497e-05,
+        5.046057062008311e-05,
+        0.0013743218437129317
+      ]
+    },
+    "32-64": {
+      "n": 276,
+      "var_sample": [
+        1.4920656410999721e-05,
+        1.393196807874796e-05,
+        1.8801550147993178e-06,
+        3.605799518407851e-05,
+        2.333000409121064e-05,
+        0.0003870001054365588
+      ],
+      "var_robust_mad": [
+        2.708003757068779e-06,
+        2.019738297069735e-06,
+        3.3323771757244076e-07,
+        8.059433847748312e-06,
+        7.81791636100113e-06,
+        0.00012575006060476404
+      ]
+    },
+    "64-128": {
+      "n": 294,
+      "var_sample": [
+        2.2621748540837017e-05,
+        2.6854734564821653e-05,
+        8.246993141383682e-07,
+        1.9504119155428256e-05,
+        6.277921079725505e-06,
+        0.0003534647769197379
+      ],
+      "var_robust_mad": [
+        5.760974539979569e-07,
+        5.686881555280604e-07,
+        8.720830586409966e-08,
+        1.265671982249463e-06,
+        8.182367501432204e-07,
+        1.0317154278590416e-05
+      ]
+    }
+  },
+  "notes": [
+    "Sample variance is 9-14x the robust (MAD) variance on every axis: the error is heavy-tailed, not Gaussian. 33.6% of accepted solves have at least one component beyond 3 robust sigma, 20.9% beyond 5.",
+    "Off-diagonal correlations among accepted solves are weak (|rho| <= 0.23), so a diagonal R is defensible.",
+    "Error grows with range z = f/s (squares): median |err| ~ z^0.9 (rotation), z^1.3 (lateral translation), z^1.7 (depth). A constant R is a compromise over the 12-128 px scale envelope; prefer the per-octave values or scale R with range.",
+    "Synthetic benchmark; the B1 pose set omits object-cutout occlusion. Real-camera variance will be larger. Never use the per-frame pose_cov or sigma_px as R (CLAUDE.md: uncertainty calibration is PARKED)."
+  ],
+  "range_scaled_R": {
+    "model": "robust sigma_i(z) = a_i * z^k_i, z = f_px / s_px = range along the optical axis in board squares (= tvec_z / square_length_m). R_i(z) = sigma_i(z)^2. Fitted on per-octave robust (MAD) sigmas, n=893 accepted solves.",
+    "a_rot_rad": [
+      0.00011196215182443742,
+      0.0001580759139887355,
+      3.802230781166702e-05
+    ],
+    "k_rot": [
+      0.9673801420571603,
+      0.8074253812980501,
+      1.017091315347368
+    ],
+    "a_trans_sq": [
+      5.202683483586322e-05,
+      4.686582040357631e-05,
+      0.00010235879713465356
+    ],
+    "k_trans": [
+      1.5016246942102534,
+      1.4943554843676625,
+      1.7337094641408957
+    ],
+    "fit_quality": "median |e|/sigma(z) within 0.83-1.24 of 1.0 in every octave and component; the constant R is 2.0-7.4x over-confident at s=12-16 px and 2.0-3.6x over-cautious at s=64-128 px",
+    "z_range_fitted": [
+      3.880607569111111,
+      70.66722209437945
+    ],
+    "tail": {
+      "frac_frames_any_comp_gt_5sigma_constant_R": 0.209,
+      "frac_frames_any_comp_gt_5sigma_range_scaled_R": 0.135498320268757,
+      "note": "heavy tail survives both models; an innovation (Mahalanobis) gate in the filter is required either way"
+    },
+    "per_frame_observables_spearman_with_error": {
+      "range_z": "0.49-0.64",
+      "rms_px": "0.47-0.61",
+      "rms_px*z": "0.66-0.80",
+      "n_used": "0.06-0.23"
+    },
+    "rms_px_gate": {
+      "0.15": {
+        "rejects_frac": 0.15789473684210525,
+        "catches_frac_of_5sigma_tail": 0.512396694214876,
+        "tail_remaining_after_gate": 0.07845744680851063
+      },
+      "0.2": {
+        "rejects_frac": 0.0761478163493841,
+        "catches_frac_of_5sigma_tail": 0.2975206611570248,
+        "tail_remaining_after_gate": 0.10303030303030303
+      },
+      "0.3": {
+        "rejects_frac": 0.030235162374020158,
+        "catches_frac_of_5sigma_tail": 0.1487603305785124,
+        "tail_remaining_after_gate": 0.11893764434180139
+      }
+    }
+  }
+}

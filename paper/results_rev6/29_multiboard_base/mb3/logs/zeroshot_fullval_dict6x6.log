@@ -1,0 +1,8 @@
+
+[detector] ckpt=runs/mb3_base_30k/ckpt_0030000.pt step=30000 config=configs/transfer_dict6x6.yaml n=10000 synth_hash=8e1ec582c99d
+  val_loss=4.760935437202454
+  M-01: mean=0.413px median=0.409px p95=0.700px tail_frac_gt4px=0.0001 n_matched=122726
+  M-02 by octave: {'12-16': 0.9039522576286454, '16-32': 0.9306545997299154, '32-64': 0.9469541149285188, '64-128': 0.9483236702798085}
+  M-04: accuracy=0.1773 by_octave={'12-16': 0.3158943697060289, '16-32': 0.22890891502469324, '32-64': 0.12040115842539954, '64-128': 0.10649255715045189}
+
+wrote paper/results_rev6/29_multiboard_base/mb3/zeroshot_fullval_dict6x6_10k.json

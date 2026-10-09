@@ -1,0 +1,57 @@
+CONV-CHART -- SYNTHETIC DATA AUGMENTATIONS
+Read from configs/rev640.yaml and dcc/synth.py, 2026-07-29.
+Every training and validation frame is generated on the fly; there is no fixed
+training set.
+
+
+GEOMETRIC / SCENE
+    Random background photograph (COCO train2017)
+    Background horizontal flip
+    Background rotation
+    Background reflect-pad and random crop
+    Board affine placement -- scale, in-plane rotation, shear, translation
+    Board perspective -- out-of-plane tilt, azimuth, field-of-view scale
+    Histogram matching of the board render to the background
+    Scene integration -- relight by local background luminance, edge feather,
+        contact shadow
+    Rectangular occluders
+    Real-object occluders (SAM2-segmented cutout bank)
+    Negative frames -- no board present
+
+
+PHOTOMETRIC / OPTICAL
+    Board specular highlight (Blinn-Phong lobe)
+    Adherent water droplets on the lens
+    Vignetting
+    NIR ink-contrast jitter
+    Brightness (multiplicative or additive)
+    Contrast
+    Glare patches
+    Ghosting
+    RGB channel shift
+    Multiplicative illumination field
+
+
+BLUR
+    Motion blur (directional)
+    Defocus blur (Gaussian)
+
+
+SENSOR
+    Lit-minus-unlit differencing pair -- daylight pedestal, LED illumination
+        lobe, auto-exposure, inter-frame shift
+    Poissonian-Gaussian sensor noise -- photon shot noise and read noise,
+        applied independently to each captured frame
+    Fixed-pattern noise -- column and row banding, PRNU
+    Dark grey-out for deep-exposure frames
+
+
+NOTES
+    24 augmentations in total.
+    Severities are centred on an OV2311-class industrial camera: global shutter,
+        monochrome, 940 nm bandpass, no artistic ISP.
+    Speckle noise is implemented but disabled.
+    The differencing pair fires on 10% of frames; it is the deployment domain,
+        not the default one.
+    Occlusion affects labels: a corner hidden by an occluder is marked
+        not-visible rather than silently kept.

@@ -1,0 +1,6 @@
+[09:49:29] ft01_head done rc=0/0/0 train=44min
+[10:33:14] ft03_head_bneck_lr0p01_hm_lr0p1 done rc=0/0/0 train=43min
+[11:17:56] ft05_head_gate3 done rc=0/0/0 train=44min
+[12:02:01] ft08_bitfit done rc=0/0/0 train=43min
+[12:45:52] ft09_full_lr0p1 done rc=0/0/0 train=43min
+ALL DONE

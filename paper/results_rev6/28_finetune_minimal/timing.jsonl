@@ -1,0 +1,27 @@
+{"arm":"ft01_head","train_s":2648.0,"fullval_s":0.0,"pose_s":19.0,"rc":[0,0,0],"start":1791403502,"end":1791406169}
+{"arm":"ft02_head_bneck_hm_lr0p1","train_s":2646.0,"fullval_s":0.0,"pose_s":19.0,"rc":[0,0,0],"start":1791403504,"end":1791406169}
+{"arm":"ft03_head_bneck_lr0p01_hm_lr0p1","train_s":2607.2,"fullval_s":0.0,"pose_s":17.9,"rc":[0,0,0],"start":1791406169,"end":1791408794}
+{"arm":"ft04_full_llrd0p3","train_s":2607.4,"fullval_s":0.0,"pose_s":17.9,"rc":[0,0,0],"start":1791406169,"end":1791408795}
+{"arm":"ft05_head_gate3","train_s":2664.3,"fullval_s":0.0,"pose_s":17.8,"rc":[0,0,0],"start":1791408794,"end":1791411476}
+{"arm":"ft07_head_reinit","train_s":2675.1,"fullval_s":0.0,"pose_s":18.5,"rc":[0,0,0],"start":1791408795,"end":1791411488}
+{"arm":"ft06_head_d3_lr0p1","train_s":2613.5,"fullval_s":0.0,"pose_s":17.9,"rc":[0,0,0],"start":1791411488,"end":1791414120}
+{"arm":"ft08_bitfit","train_s":2627.1,"fullval_s":0.0,"pose_s":17.8,"rc":[0,0,0],"start":1791411476,"end":1791414121}
+{"arm":"ft10_full_lr1","train_s":2610.8,"fullval_s":0.0,"pose_s":18.3,"rc":[0,0,0],"start":1791414120,"end":1791416749}
+{"arm":"ft09_full_lr0p1","train_s":2614.0,"fullval_s":0.0,"pose_s":17.3,"rc":[0,0,0],"start":1791414121,"end":1791416753}
+{"arm":"ft14_head_bneck_hm_lr1","train_s":2465.2,"fullval_s":0.0,"pose_s":23.5,"rc":[0,0,0],"start":1791416776,"end":1791419265}
+{"arm":"ft13_head_bneck_hm_lr0p1_20k","train_s":9342.3,"fullval_s":0.0,"pose_s":1.4,"rc":[0,0,1],"start":1791419265,"end":1791428608}
+{"arm":"ft16_head_bneck_lr1_hm_lr0p1","train_s":2572.7,"fullval_s":0.0,"pose_s":24.1,"rc":[0,0,0],"start":1791428650,"end":1791431247}
+{"arm":"ft15_head_bneck_lr0p3_hm_lr0p1","train_s":null,"fullval_s":0.0,"pose_s":null,"rc":[0,0,0],"note":"driver killed mid-arm; pose eval run by lane F"}
+{"arm":"mb15_ft17_post_bneck","train_s":2585.0,"fullval_s":0.0,"pose_s":23.3,"rc":[0,0,0],"start":1791433888,"end":1791436496}
+{"arm":"ft17_post_bneck","train_s":2582.4,"fullval_s":0.0,"pose_s":23.4,"rc":[0,0,0],"start":1791436496,"end":1791439102}
+{"arm":"mb15_ft01_head","train_s":2588.0,"fullval_s":0.0,"pose_s":23.1,"rc":[0,0,0],"start":1791439102,"end":1791441713}
+{"arm":"ft11_head_lr3x","train_s":1993.8,"fullval_s":0.0,"pose_s":13.9,"rc":[0,0,0],"start":1791441713,"end":1791443721}
+{"arm":"ft18_head_bneck_lr3x_hm_lr0p1","train_s":2487.0,"fullval_s":0.0,"pose_s":20.1,"rc":[0,0,0],"start":1791443744,"end":1791446252}
+{"arm":"mb3_ft01_head","train_s":2591.2,"fullval_s":0.0,"pose_s":21.4,"rc":[0,0,0],"start":1791444018,"end":1791446630}
+{"arm":"ft19_head_bneck_e4_hm_lr1","train_s":2607.9,"fullval_s":0.0,"pose_s":22.3,"rc":[0,0,0],"start":1791446252,"end":1791448882}
+{"arm":"mb3_ft02_head_bneck_hm_lr0p1","train_s":2572.4,"fullval_s":0.0,"pose_s":19.7,"rc":[0,0,0],"start":1791446630,"end":1791449223}
+{"arm":"mb3_ft14_head_bneck_hm_lr1","train_s":2609.3,"fullval_s":0.0,"pose_s":20.7,"rc":[0,0,0],"start":1791449223,"end":1791451853}
+{"arm":"mb3_ft17_post_bneck","train_s":2587.0,"fullval_s":0.0,"pose_s":19.5,"rc":[0,0,0],"start":1791451878,"end":1791454484}
+{"arm":"ft12_head_20k","train_s":8189.6,"fullval_s":0.0,"pose_s":13.0,"rc":[0,0,0],"start":1791448882,"end":1791457084}
+{"arm":"ft20_full_lr3x","train_s":1782.5,"fullval_s":0.0,"pose_s":13.3,"rc":[0,0,0],"start":1791457130,"end":1791458926}
+{"arm":"ft21_head_bneck_lr3x_hm_lr0p1_20k","train_s":6454.2,"fullval_s":0.0,"pose_s":13.2,"rc":[0,0,0],"start":1791458940,"end":1791465408}

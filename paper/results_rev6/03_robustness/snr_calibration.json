@@ -1,0 +1,134 @@
+{
+  "sigma_read_dn": 2.0,
+  "read_std_range": [
+    1.0,
+    3.0
+  ],
+  "model": "sigma_DN^2 = S/K + sigma_read^2 (Poissonian-Gaussian)",
+  "signal_region": "board convex hull, noise disabled",
+  "gray_attenuation": 0.6685551585321887,
+  "snr_db_note": "snr_db_* = DELIVERED grayscale frame (per-channel sigma x 0.6686, audit A3); snr_db_*_modelled = per-channel formula",
+  "rows": [
+    {
+      "K": 30,
+      "S_mean": 142.5663024566962,
+      "S_white": 202.95833333333334,
+      "snr_db_mean": 37.156415502139566,
+      "snr_db_white": 39.32514046971856,
+      "snr_db_mean_lo": 35.193867857164776,
+      "snr_db_mean_hi": 38.97924544884582,
+      "snr_db_mean_modelled": 33.659160385047656,
+      "snr_db_white_modelled": 35.827885352626645
+    },
+    {
+      "K": 16,
+      "S_mean": 134.46441000201807,
+      "S_white": 202.13333333333333,
+      "snr_db_mean": 35.13377558187141,
+      "snr_db_white": 37.40022096614133,
+      "snr_db_mean_lo": 33.66290498887717,
+      "snr_db_mean_hi": 36.33626409082044,
+      "snr_db_mean_modelled": 31.636520464779498,
+      "snr_db_white_modelled": 33.90296584904942
+    },
+    {
+      "K": 8,
+      "S_mean": 138.41231318116743,
+      "S_white": 203.06666666666663,
+      "snr_db_mean": 33.03663980577902,
+      "snr_db_white": 34.96901729682198,
+      "snr_db_mean_lo": 32.120938013565265,
+      "snr_db_mean_hi": 33.69587350046447,
+      "snr_db_mean_modelled": 29.539384688687104,
+      "snr_db_white_modelled": 31.471762179730067
+    },
+    {
+      "K": 4,
+      "S_mean": 135.71025438759438,
+      "S_white": 196.87583333333333,
+      "snr_db_mean": 30.359958956140783,
+      "snr_db_white": 32.120439607810255,
+      "snr_db_mean_lo": 29.822146005659327,
+      "snr_db_mean_hi": 30.717825487650853,
+      "snr_db_mean_modelled": 26.862703839048873,
+      "snr_db_white_modelled": 28.62318449071834
+    },
+    {
+      "K": 2,
+      "S_mean": 153.41957998890246,
+      "S_white": 209.9050847457627,
+      "snr_db_mean": 28.145608733452804,
+      "snr_db_white": 29.565340610245965,
+      "snr_db_mean_lo": 27.884566596302918,
+      "snr_db_mean_hi": 28.310113553188437,
+      "snr_db_mean_modelled": 24.64835361636089,
+      "snr_db_white_modelled": 26.068085493154047
+    },
+    {
+      "K": 1,
+      "S_mean": 139.83101762961982,
+      "S_white": 201.03499999999997,
+      "snr_db_mean": 24.83079995077963,
+      "snr_db_white": 26.444408576527792,
+      "snr_db_mean_lo": 24.68239097003863,
+      "snr_db_mean_hi": 24.922342307900895,
+      "snr_db_mean_modelled": 21.333544833687718,
+      "snr_db_white_modelled": 22.94715345943588
+    },
+    {
+      "K": 0.5,
+      "S_mean": 141.1364387641188,
+      "S_white": 204.0991666666667,
+      "snr_db_mean": 21.92223618019394,
+      "snr_db_white": 23.543017432776292,
+      "snr_db_mean_lo": 21.847037751566916,
+      "snr_db_mean_hi": 21.967988272413347,
+      "snr_db_mean_modelled": 18.424981063102027,
+      "snr_db_white_modelled": 20.045762315684378
+    },
+    {
+      "K": 0.25,
+      "S_mean": 143.17960892385034,
+      "S_white": 201.38833333333335,
+      "snr_db_mean": 19.005240209137042,
+      "snr_db_white": 20.495486618750572,
+      "snr_db_mean_lo": 18.967750278566072,
+      "snr_db_mean_hi": 19.027890498455456,
+      "snr_db_mean_modelled": 15.507985092045127,
+      "snr_db_white_modelled": 16.99823150165866
+    },
+    {
+      "K": 0.1,
+      "S_mean": 141.62516315083593,
+      "S_white": 203.97666666666666,
+      "snr_db_mean": 14.996410612152442,
+      "snr_db_white": 16.58455180830901,
+      "snr_db_mean_lo": 14.981148112385691,
+      "snr_db_mean_hi": 15.005593924454864,
+      "snr_db_mean_modelled": 11.49915549506053,
+      "snr_db_white_modelled": 13.087296691217096
+    },
+    {
+      "K": 0.05,
+      "S_mean": 134.4504598539829,
+      "S_white": 198.8125,
+      "snr_db_mean": 11.766122590202151,
+      "snr_db_white": 13.467025335909831,
+      "snr_db_mean_lo": 11.75806669844522,
+      "snr_db_mean_hi": 11.770963307752037,
+      "snr_db_mean_modelled": 8.268867473110237,
+      "snr_db_white_modelled": 9.969770218817915
+    },
+    {
+      "K": 0.02,
+      "S_mean": 145.22993088944744,
+      "S_white": 213.33333333333334,
+      "snr_db_mean": 8.12572472540122,
+      "snr_db_white": 9.796513967353826,
+      "snr_db_mean_lo": 8.122737007284032,
+      "snr_db_mean_hi": 8.127518343358295,
+      "snr_db_mean_modelled": 4.628469608309307,
+      "snr_db_white_modelled": 6.2992588502619125
+    }
+  ]
+}

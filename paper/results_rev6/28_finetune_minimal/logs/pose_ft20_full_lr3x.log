@@ -1,0 +1,14 @@
+  200/1000 solved=186 refused=14
+  400/1000 solved=365 refused=35
+  600/1000 solved=553 refused=47
+  800/1000 solved=742 refused=58
+  1000/1000 solved=929 refused=71
+
+[with-refiner] 929/1000 solved (92.9%), 71 refused {'too_few': 68, 'vacuous_uncorroborated': 2, 'collinear': 1}, 43 flagged ambiguous
+  NEES (unambiguous, n=564): mean 13.126 median 2.784 vs chi2_6 expectation 6.000 -> OVER-confident by 2.19x
+  frac within chi2_6 95% bound (12.592): 83.5% (ideal 95%)
+  NEES (AMBIGUOUS poses, n=20): mean 418.395 -- single-Gaussian cov cannot describe a bimodal posterior; expect this to be large
+  error std (unambiguous, n=886) rot xyz deg [0.2701, 0.3191, 0.0944] trans xyz sq [0.01298, 0.01065, 0.04779]  | robust (MAD) rot deg [0.088, 0.0892, 0.0358] trans sq [0.00294, 0.00285, 0.01128]
+  M-05 rotation    median 0.1252 deg  mean 0.8518  p95 1.2460
+  M-06 translation median 0.0102 sq   mean 0.0769  p95 0.1424
+-> paper/results_rev6/28_finetune_minimal/pose_ft20_full_lr3x.json

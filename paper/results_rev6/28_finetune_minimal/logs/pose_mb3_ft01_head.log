@@ -1,0 +1,7 @@
+
+[with-refiner] 1/1000 solved (0.1%), 999 refused {'too_few': 999}, 0 flagged ambiguous
+  NEES (unambiguous, n=1): mean 6.543 median 6.543 vs chi2_6 expectation 6.000 -> OVER-confident by 1.09x
+  frac within chi2_6 95% bound (12.592): 100.0% (ideal 95%)
+  M-05 rotation    median 0.1680 deg  mean 0.1680  p95 0.1680
+  M-06 translation median 0.0539 sq   mean 0.0539  p95 0.0539
+-> paper/results_rev6/28_finetune_minimal/pose_mb3_ft01_head.json

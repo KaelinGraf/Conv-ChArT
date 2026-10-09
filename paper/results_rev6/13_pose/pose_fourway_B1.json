@@ -1,0 +1,75 @@
+{
+  "pose_set": "eval_pose_rev6_b1",
+  "n_images": 1000,
+  "ckpt": "runs/rev640_160k_rev6/ckpt_0160000.pt",
+  "refiner_ckpt": "runs/refiner_rev6/ckpt_0013000.pt",
+  "dc_ckpt": "runs/charuconet_rev6_ft/ckpt_latest.pt",
+  "pnp": "ALL arms use dcc.pipeline.pnp -- isolates the corners, not the PnP implementation; classical numbers therefore differ from eval_classical.py's native output",
+  "units": "rotation deg (geodesic); translation in BOARD SQUARES (square_length_m = 1.0)",
+  "arms": {
+    "ours_coarse": {
+      "n": 1000,
+      "n_solved": 960,
+      "n_refused": 40,
+      "solve_rate": 0.96,
+      "rot_deg": {
+        "median": 0.3971473216043361,
+        "mean": 1.0661286651119466,
+        "p95": 2.3628925436477197
+      },
+      "trans_squares": {
+        "median": 0.030554602670632702,
+        "mean": 0.0860669207614675,
+        "p95": 0.32092759421933803
+      }
+    },
+    "ours_refined": {
+      "n": 1000,
+      "n_solved": 960,
+      "n_refused": 40,
+      "solve_rate": 0.96,
+      "rot_deg": {
+        "median": 0.1379114766777815,
+        "mean": 0.5574760064881843,
+        "p95": 1.3455247225983753
+      },
+      "trans_squares": {
+        "median": 0.010640521594151568,
+        "mean": 0.04618676260625527,
+        "p95": 0.18407533486089636
+      }
+    },
+    "deep_charuco": {
+      "n": 1000,
+      "n_solved": 933,
+      "n_refused": 67,
+      "solve_rate": 0.933,
+      "rot_deg": {
+        "median": 0.9131411212213754,
+        "mean": 10.623376975175832,
+        "p95": 89.36030666605572
+      },
+      "trans_squares": {
+        "median": 0.0770422773338113,
+        "mean": 1.2635718457350944,
+        "p95": 7.269530745009977
+      }
+    },
+    "classical": {
+      "n": 1000,
+      "n_solved": 544,
+      "n_refused": 456,
+      "solve_rate": 0.544,
+      "rot_deg": {
+        "median": 0.1601803821868351,
+        "mean": 0.8690103355656952,
+        "p95": 2.348684961395977
+      },
+      "trans_squares": {
+        "median": 0.02004165919442591,
+        "mean": 0.06539797593415407,
+        "p95": 0.22358745804683142
+      }
+    }
+  }
+}

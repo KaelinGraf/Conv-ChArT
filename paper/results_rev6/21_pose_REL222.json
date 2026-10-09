@@ -1,0 +1,37 @@
+{
+  "pose_set": "eval_pose_rev6",
+  "arm": "with-refiner",
+  "ckpt": "runs/rel_w25_lam2_100k_rev6/ckpt_0100000.pt",
+  "ckpt_step": 100000,
+  "refiner_ckpt": "runs/ref_s15_10k_rev6/ckpt_0010000.pt",
+  "refiner_step": 10000,
+  "n_images": 1000,
+  "n_solved": 929,
+  "n_refused": 71,
+  "refusal_reasons": {
+    "too_few": 68,
+    "collinear": 2,
+    "vacuous_uncorroborated": 1
+  },
+  "n_ambiguous": 51,
+  "solve_rate": 0.929,
+  "m05_rot_deg": {
+    "median": 0.11670491581427796,
+    "mean": 0.6221753183616798,
+    "p95": 1.3674408221234156
+  },
+  "m06_trans_squares": {
+    "median": 0.008089646139564897,
+    "mean": 0.051802011976836,
+    "p95": 0.1476079876988311
+  },
+  "nees": {
+    "expected_chi2_dof": 6,
+    "n_unambiguous": 661,
+    "n_ambiguous": 21,
+    "mean_unambiguous": 9.547480973196883,
+    "median_unambiguous": 2.7936137202799736,
+    "mean_ambiguous": 47659.28978787042,
+    "frac_within_chi2_95": 0.8502269288956127
+  }
+}

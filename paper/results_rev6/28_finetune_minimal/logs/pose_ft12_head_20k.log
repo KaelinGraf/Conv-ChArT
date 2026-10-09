@@ -1,0 +1,11 @@
+/home/kaelin/p4p/dense deep charuco/dcc/pipeline.py:291: RuntimeWarning: invalid value encountered in divide
+  proj = proj[:, :2] / proj[:, 2:3]
+
+[with-refiner] 24/1000 solved (2.4%), 976 refused {'too_few': 970, 'vacuous_uncorroborated': 2, 'pnp_solver_failed': 4}, 2 flagged ambiguous
+  NEES (unambiguous, n=19): mean 5.553 median 3.573 vs chi2_6 expectation 6.000 -> conservative by 1.08x
+  frac within chi2_6 95% bound (12.592): 89.5% (ideal 95%)
+  NEES (AMBIGUOUS poses, n=2): mean 58.071 -- single-Gaussian cov cannot describe a bimodal posterior; expect this to be large
+  error std (unambiguous, n=22) rot xyz deg [0.2139, 0.4128, 0.0859] trans xyz sq [0.03888, 0.01245, 0.11907]  | robust (MAD) rot deg [0.1078, 0.1024, 0.0568] trans sq [0.0063, 0.00697, 0.0467]
+  M-05 rotation    median 0.3199 deg  mean 0.4304  p95 1.0988
+  M-06 translation median 0.0334 sq   mean 0.0655  p95 0.1728
+-> paper/results_rev6/28_finetune_minimal/pose_ft12_head_20k.json

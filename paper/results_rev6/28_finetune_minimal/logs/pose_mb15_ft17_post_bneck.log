@@ -1,0 +1,3 @@
+
+[with-refiner] 0/1000 solved (0.0%), 1000 refused {'too_few': 1000}, 0 flagged ambiguous
+-> paper/results_rev6/28_finetune_minimal/pose_mb15_ft17_post_bneck.json

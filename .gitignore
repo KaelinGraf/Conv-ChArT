@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 runs/
+deploy/
 sheets/
 audit/
 introspect_out/
@@ -104,3 +105,29 @@ docs/*
 !docs/ARCHITECTURE.md
 !docs/architecture.svg
 !docs/TOOLING.md
+
+# ---------------------------------------------------------------------------
+# REPORT BRANCH (2026-10-09, Kaelin: "push all that out on a new branch called
+# report ... for my honours thesis report - must be thorough"). Everything the
+# public main tree withholds is re-included here: the paper, every results
+# directory (READMEs, tables, JSON, figures, per-run logs), every config ever
+# trained (the experiment record), the tooling that produced the numbers, and
+# the conference deliverables. Later rules win, so these negations override the
+# default-deny above. Still excluded: model weights and exports (*.pt, *.onnx,
+# runs/, deploy/), generated image sets (eval_pose*/, sheets/, audit*),
+# tools/charuconet.py (third-party MIT code, see above), LaTeX build files, and
+# the rev-5 generator-audit overlays (8 x 12 MB sample sheets of a superseded
+# generator revision).
+# ---------------------------------------------------------------------------
+!paper/
+paper/conv_chart.aux
+paper/conv_chart.log
+paper/conv_chart.out
+paper/results_rev5/07_generator_audit/overlay_*.png
+!paper/**/logs/
+!figures/
+!configs/*
+!tools/*
+tools/charuconet.py
+!tests/*
+!docs/*

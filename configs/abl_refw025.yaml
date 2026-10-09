@@ -1,0 +1,281 @@
+# CUT FROM configs/abl_ref_s15.yaml by tools/cut_ablation.py -- do not hand-edit; regenerate.
+# Changes EXACTLY 1 key(s): refiner_width=0.25.
+# The one-key invariant below was verified programmatically at cut time; re-run this
+# command after ANY edit to configs/abl_ref_s15.yaml (CLAUDE.md ablation protocol).
+#
+# REFINER WIDTH 0.25. The refiner is 97,056 params on top of a 502,322-param detector -- 16.2% of the shipping model -- and its width has never been swept. width 0.5 -> 25,520 (3.8x smaller), 0.25 -> 7,032 (13.8x). Cut from abl_ref_s15.yaml so sigma_ref stays 1.5 and the comparator is the arm that just finished on the SAME 10k schedule: ref_s15_10k_rev6, median 0.0969 px / p95 0.9641 / <0.25px 81.89% / <1px 95.11%. One key differs. This is the last untested size lever: every detector-side structural knob came back null, so if the refiner shrinks too the whole model does.
+# CUT FROM configs/abl_t_w375_a2_ce.yaml by tools/cut_ablation.py -- do not hand-edit; regenerate.
+# Changes EXACTLY 1 key(s): sigma_ref=1.5.
+# The one-key invariant below was verified programmatically at cut time; re-run this
+# command after ANY edit to configs/abl_t_w375_a2_ce.yaml (CLAUDE.md ablation protocol).
+#
+# REFINER TARGET WIDTH sigma_ref=1.5. First sweep of this axis ever: render_refiner_target's sigma was a Python default at every call site until 358e98e, so it has been 1.5 in every refiner ever trained. The detector analogue sigma_hm is one of the two largest levers in the campaign (0.5 -> 1.0 costs 0.0429 px p95, ~7x the noise range; the full-width ladder is monotone down to one-hot BCE), and the campaign's overall finding is that every real lever lives in the loss/target representation rather than the architecture -- so this is the highest-value untested knob left. sigma_ref=1.5 is the SCHEDULE-MATCHED CONTROL, retrained rather than compared against the banked rev-6 refiner, which ran a different step budget. Detector keys in this file are irrelevant to train_refiner.py and are inherited only so the synth block matches.
+# CUT FROM configs/abl_nodilate_width_half_s05.yaml by tools/cut_ablation.py -- do not hand-edit; regenerate.
+# Changes EXACTLY 2 key(s): width_mult=0.375, loss_form=ce.
+# The one-key invariant below was verified programmatically at cut time; re-run this
+# command after ANY edit to configs/abl_nodilate_width_half_s05.yaml (CLAUDE.md ablation protocol).
+#
+# TIER-LADDER ARM (Kaelin 2026-07-31: "keep iterating until you do enough ablations to land on an
+# optimal tradeoff of params and performance, tiered models is fine").
+# 
+# DELIBERATELY MULTI-KEY, unlike every attribution arm before it. Its purpose is not to isolate a
+# mechanism -- that work is done -- but to place a POINT ON THE PARETO FRONTIER using the levers
+# already proven: nodilate (matched the reference for -25% params), one-hot BCE (beat focal at
+# every width measured: -0.038 px p95 / +0.43 pp M-04 at 882k, -0.049 px / -0.11 pp at 222k), and
+# attention-block count as the size dial. Every arm in the ladder shares that base and differs only
+# in width_mult / attn_blocks / xsa, so the ladder is internally comparable even though no single
+# arm is one key off anything.
+# 
+# gates_enabled is NOT set: measured 2026-07-31, gates are accuracy-neutral BUT save zero params
+# because dcc/model.py:269 constructs the AttnGate modules and merely bypasses them. Turning them
+# off would change nothing in the size column, so the ladder keeps the shipping default.
+# *** HEADLINE CANDIDATE (Kaelin 2026-07-30) *** whichever of this arm and its
+# xsa/non-xsa counterpart wins becomes the CONFERENCE HEADLINE MODEL, replacing
+# runs/rev640_160k_rev6/ckpt_0160000.pt in every figure. The regeneration checklist --
+# 3x3 robustness panel, architecture SVG, introspection, darkness filmstrip, pose
+# table, cost report -- is paper/conference/00_PENDING_HEADLINE_SWAP.md. Do not swap
+# one figure without doing all of them.
+e4_dilated: false
+width_mult: 0.375
+# ABLATION A-NODILATE+WIDTH_HALF (sigma_hm 0.5). THREE keys vs configs/rev640.yaml
+# (e4_dilated, width_mult, sigma_hm) but only TWO are variables -- see below. All three are
+# already supported by dcc/model.py and dcc/targets.py; no code change.
+#
+# Kaelin 2026-07-30: "nodilate should be the norm from now on (whenever attention is
+# present). The existing ablation proves the dilation is a waste of parameters." A-NODILATE
+# finished 50k at M-04 99.01% vs the reference 99.14% (inside the +/-0.15 pp noise band),
+# m01 median identical to 4 dp, p95 slightly BETTER, for 1,180,672 fewer params (-25.1%).
+# So e4_dilated=false is the BASELINE ASSUMPTION here, not a factor under test.
+#
+# sigma_hm=0.5 likewise: "sigma is hyperparameter tuning, and we will have a
+# sigma = 0.5/1.0 baseline to compare to regardless". The sigma ladder gives a
+# full-width same-sigma control, so carrying the tuned sigma costs no attribution.
+#
+# THE ONE FACTOR UNDER TEST is width_mult 0.5 -- how small can this get before accuracy
+# breaks.
+#
+# MEASURED before launch, on the live module:
+#   reference             4,698,034 params   60.18 GMACs
+#   nodilate              3,517,362 (-25.1%) 54.52
+#   THIS ARM                882,402 (-81.2%) 13.66   -- 5.3x smaller, 4.4x fewer MACs
+#                                                       ~27 GFLOPs/frame, >200 fps Orin fp16
+#
+# *** ATTRIBUTION LIMIT, READ BEFORE INTERPRETING A LOSS ***
+# width_mult scales conv channels AND the attention dim together: dcc/model.py:213 does
+# `d = c(d)`, so d 256 -> 128 (head dim 16) and attention params fall -74.9%
+# (1,580,032 -> 396,800). If this arm degrades, NO CURRENTLY BUILDABLE ARM separates
+# "attention got too narrow" from "the conv trunk got too thin" -- abl_width_half.yaml has
+# the same coupling. Decoupling needs a small model.py change (an attention-width multiplier
+# independent of width_mult) so d can stay 256 while conv channels halve. Do not attribute a
+# loss to either cause without that arm.
+#
+# DELIBERATELY DEFERRED (Kaelin 2026-07-30): "i dont think we need to bother anyway with
+# the really thorough attribution just yet, if it turns out to be a very strong result we
+# can consider it." So the decoupling arm is NOT queued. If this arm loses and the
+# narrowed attention is the suspect, the back-pocket lever is XSA on top -- parameter-free,
+# and it produced the largest attention-concentration effect of any arm (bottleneck entropy
+# 4.96 nats vs the reference's ~7.0). See
+# paper/results_rev6/08_ablations/00_BACK_POCKET_deferred_arms.md.
+# 640x480 fast-baseline arm (attend_div=8, 4-stage encoder, H/8 attention): the
+# A1/A9 ablation platform, measured 140-142 samples/s vs native's 25.9. scale_range_px
+# below is in INPUT px like default.yaml's, but since input_size differs the physical
+# (sensor-plane) distance envelope it covers differs too -- intentional, this arm is
+# for the resolution-comparison study, not a physical-scale match to the native config.
+input_size: [640, 480]   # (W, H) network input
+sigma_hm: 0.5
+sigma_cls: 1.0
+alpha: 2
+beta: 4
+lambda_cls: 1.0
+tau_hm: 0.3
+tau_id: 0.5
+lattice_tol_px: 3.0
+negative_p: 0.05
+scale_range_px: [12, 128]     # s at input, log-uniform; floor 16->12 (Kaelin 2026-07-27: "furthest should be a bit further away") -- markers are unreadable below ~16, corners still learnable
+refiner_jitter_px: 4
+freeze_trunk: false
+attend_div: 8                   # 4-stage encoder, attention at H/8 (see dcc/model.py's DetectorNet)
+attn_blocks: 2                  # MHSA+MLP at bottleneck (MT-01)
+attn_heads: 8
+rope_lambda_min_cells: 2.5       # replaces MT-06's rope_base: standard-RoPE base can't reach the spec's own 2-cell short end at a useful long end; wavelength-anchoring can (nudged 2->2.5 to clear the Nyquist degeneracy), signed off 2026-07-27
+xsa: false                       # exclusive self-attention at the bottleneck (Zhai, arXiv:2603.09078); default off, see paper/xsa_value_correlation.md and ablations.md A14
+board:
+  squares: [5, 5]
+  dictionary: DICT_5X5_50
+  marker_ids: [0, 11]
+  marker_ratio: 0.7
+  square_length_m: null
+synth:
+  render_res: 480
+  backgrounds: /home/kaelin/datasets/coco/train2017
+  val_seed: 1000
+  train_seed: 2000
+  pose_seed: 3000
+  val_size: 10000
+  refiner_res_mult: 2.5   # refiner crops generate at sensor scale (1600x1200, native's input_size) rather than this arm's 640x480, so the sensor-anchored refiner transfers unchanged between resolution arms
+  refiner_max_corners: 8
+  refiner_val_composites: 1250
+  refiner_generic_frac: 0.0   # Slice B5 task #6: optional synthetic-junction refiner-crop blend, off by default (spec-literal SD-07)
+  refiner_full_frac: 0.08   # dcc.refiner_data's mixed stream: this fraction of samples pay the full generate_sample+cut_refiner_crops render (global-photometric realism the fast local-window arm can't reproduce) as distribution insurance; the rest take the fast arm. An in-worker per-sample coin, not a dedicated worker (torch's round-robin batch collection would bottleneck the whole loader behind one slow worker) and not a cross-process queue (batch composition would become scheduler-timing-dependent, breaking (seed, worker) stream determinism).
+  rot_deg: 180
+  shear_deg: 35
+  translate_frac: 0.45
+  perspective_p: 0.8
+  tilt_max_deg: 60
+  fov_scale: [0.7, 1.4]
+  bg_hflip_p: 0.5
+  prefilter:   # Slice B5 task #7: anti-alias blur before warpPerspective minifies the board render
+    enabled: true
+    k: 0.5
+  occlusion:
+    p: 0.55
+    holes: [1, 6]
+    size: [16, 64]
+  cutouts:
+    path: /home/kaelin/datasets/cutouts
+    p: 0.5   # rev-6: 0.35 -> 0.5 (Kaelin: \"have more occlusions\")
+    max_objects: 3
+    scale: [0.08, 0.5]
+  integration:            # rev-6 scene integration (Kaelin 2026-07-29): the board was
+                          # alpha-pasted after a GLOBAL histogram match, so it read as
+                          # "cut into" the scene rather than lit into it -- the main
+                          # sim-to-real tell and the reason a random-init model reached
+                          # 99% M-04 in 12.5k steps. Photometric ONLY: corner labels come
+                          # from H @ p_render, never from the mask or from pixel values.
+    relight_enabled: true       # multiply the board by a blurred, mean-normalised
+                                # luminance field of the background, so it inherits the
+                                # scene's low-frequency illumination gradient
+    relight_sigma_frac: 0.125   # blur sigma as a fraction of min(w,h) -- low-frequency
+                                # illumination only, never scene texture
+    relight_clip: [0.45, 1.7]   # bound the field so a near-black or blown background
+                                # cannot annihilate or saturate the board outright
+    feather_px: 0.9             # _warp_mask + INTER_LINEAR leaves ~1px of edge softness;
+                                # place_cutout ALREADY feathers its alpha (3,3), so before
+                                # this a pasted chair blended better than the fiducial did
+    shadow_enabled: true        # contact shadow: offset+blurred copy of the mask darkening
+                                # the BACKGROUND only (never under the board itself)
+    shadow_offset_frac: [0.005, 0.03]
+    shadow_strength: [0.15, 0.5]
+  photometric:
+    gauss_noise_p: 0.5
+    noise_std: [3.2, 7.1]
+    sensor_noise_enabled: true   # rev-2 aug pack (task #29, Kaelin 2026-07-27): Poissonian-Gaussian (Foi et al. 2008 IEEE TIP; EMVA 1288) replaces the legacy additive draw above when true; gauss_noise_p still gates WHETHER noise fires, this only picks the formula (kept false-able for A/B)
+    sensor_noise_electrons_per_dn: [3.0, 30.0]   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS [1.5, 30.0]. Sampling stays UNIFORM in K: log-uniform was tried and MEASURED to be worse for this purpose (median K 16.5 -> 9.6, frac below K=10 rising 30% -> 52%), i.e. it weights the high-gain/noisy end harder, the opposite of an auto-exposed camera which uses the LOWEST gain that achieves exposure. Raising the floor 1.5 -> 3.0 is what removes the extreme-gain tail.
+    sensor_noise_read_std: [1.0, 3.0]   # same provisional-pending-#26 status as electrons_per_dn above; not independently re-derived from the datasheet (OV2311 doesn't publish read noise either, and DN-scale read noise properly co-varies with gain/K, which this pack does not model as coupled draws)
+    motion_blur_p: 0.5
+    motion_blur_kmax: 5
+    gauss_blur_p: 0.25
+    speckle_p: 0.0   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS 0.5. The 940nm illuminator is an LED: coherence length ~microns, so laser speckle cannot form. Coherent illumination is rare in general fiducial scenes too.
+    speckle_std: [0.03, 0.12]
+    mult_noise_p: 0.5
+    mult_noise_range: [0.98, 1.02]   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS [0.95, 1.05] (+/-5%). Real PRNU is 0.5-1.5% and is ALREADY modelled by fpn_prnu_std below; +/-5% was 3-10x the physical figure and duplicated a model we already have right.
+    brightness_p: 0.5
+    brightness_range: [-0.6, 0.3]   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS [-0.98, 0.35]; -0.98 crushed white board squares to <=5/255 and ~14% of ALL frames sat below -0.6. No auto-exposed camera operates there.
+    brightness_add_floor: -0.58   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS -0.96; tracks the new brightness_range floor so the additive branch's clamp still binds.
+    contrast_p: 0.5   # Slice B5 task #12: reference pipeline's only contrast source, restored
+    contrast_range: [0.8, 1.2]
+    rgb_shift_p: 0.5
+    rgb_shift_limit: 10   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS 20. Our sensor is MONO so channel shift is not a sensor effect at all; kept at reduced strength only because a GENERAL detector may see a colour camera whose channel gains vary, which becomes a scene-dependent luminance shift after grey conversion.
+    glare_peak: [30, 130]   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. NEW: severity was hardcoded rng.uniform(40, 200) in dcc/synth.py; 200 DN saturates whatever it covers and a 940nm bandpass rejects most flare sources. Now config-driven.
+    glare_p: 0.25   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS 0.3; severity moved to glare_peak below.
+    ghost_p: 0.25
+    ghost_alpha: [0.05, 0.2]   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS [0.1, 0.5]; alpha 0.5 is a 50% ghost. Global-shutter sensors have negligible image lag, so generic ghosting is not a sensor effect for us -- the physically real version is inter-frame motion in the DIFFERENCING pair (differencing_shift_px).
+    ghost_shift_px: [1, 4]
+    specular_p: 0.15   # rev-2 aug pack (task #29): board-anchored Blinn-Phong lobe (Blinn 1977)
+    specular_strength: [30, 150]   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS [30, 220]; 220 DN is a near-saturating lobe. The docking target is MATTE, non-retroreflective (redraft: 'The docking marker is a 60 mm matte board whose dark squares must be carbon black'). 150 retains headroom for glossier general-purpose boards.
+    specular_exponent: [20, 200]
+    specular_spread_frac: [0.08, 0.2]   # lobe spread, as a fraction of min(w2, h2) -- not pinned by the brief, chosen for a plausibly board-scaled hot spot
+    droplet_p: 0.1   # rev-2 aug pack (task #29): adherent droplets (Roser & Geiger ICCV 2009; You et al. CVPR 2013)
+    droplet_n: [1, 4]
+    droplet_mode_b_p: 0.5   # coin between mode (a) bokeh blob and mode (b) refractive patch; mode (b) is full-canvas-arm only regardless (see dcc/synth.py)
+    droplet_bokeh_radius: [4, 18]
+    droplet_bokeh_brightness: [40, 220]
+    droplet_refractive_radius: [6, 20]
+    droplet_refractive_minify: [0.15, 0.4]
+    droplet_refractive_alpha: [0.6, 0.9]
+    droplet_refractive_blur_sigma: [2, 4]
+    droplet_hole_alpha_thresh: 0.7   # mode-(b) droplets past this alpha AND radius register an occlusion hole (information-destroying, task #29's only label-touching effect)
+    droplet_hole_radius_thresh: 8
+    vignette_p: 0.5   # rev-2 aug pack (task #29): radial falloff about canvas centre (Goldman TPAMI 2010)
+    vignette_strength: [0.05, 0.25]
+    ink_contrast_p: 0.3   # rev-2 aug pack (task #29): NIR ink-contrast jitter -- carbon-black ink/toner absorbs NIR strongly, many dye inks are comparatively NIR-transparent (Vis-NIR ink discrimination forensics, e.g. Forensic Science International 254 (2015))
+    ink_contrast_scale: [1.0, 1.3]   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS [1.0, 1.6]. This BRIGHTENS ink toward white, destroying board contrast, and was the single worst factor in the 15-factor robustness sweep (29.6% gross error at 1.6 vs 9.5% coarse). 1.3 still covers ordinary print variation for a general detector.
+    differencing_p: 0.10   # rev-4 (Kaelin 2026-07-28): was 0.5. Differencing is a DEPLOYMENT specialisation,
+                           # not a model-development target -- the base model must stay general over ordinary
+                           # capture environments, and specialising for the 940nm active-illumination rig is a
+                           # separate fine-tune. 10% keeps the regime represented without dominating.  rev-2 aug pack (task #29, Kaelin's design): flash/no-flash differencing pair (Petschnigg et al. SIGGRAPH 2004; Eisemann & Durand SIGGRAPH 2004); mutually exclusive with brightness_p above (see dcc/synth.py)
+    differencing_ambient: [0.05, 0.95]   # rev-3 (task #31, Kaelin's 940nm rig photometry, 2026-07-28): daylight pedestal, night through midday -- PROVISIONAL, pending measured lit/unlit histograms from tasks #26/#31
+    differencing_illum_peak: [0.25, 0.9]   # rev-5 augmentation-realism audit (Kaelin 2026-07-28): severities re-centred on an industrial/machine-vision camera (OV2311-class, global shutter, mono, NIR bandpass, NO artistic ISP). Principle: do not make the model learn harder things than reality presents. WAS [0.15, 0.9]; at peak 0.15 against ambient 0.95 the LED adds only 16% over daylight. 940nm is chosen BECAUSE solar irradiance is suppressed there (water absorption band), so a real emitter competes better than the old floor implied.
+    differencing_autoexposure: true   # rev-4 (Kaelin's 940nm QE argument, 2026-07-28): behind a 940nm bandpass
+                           # the sensor sees a narrow daylight slice at ~30% QE, so a real rig picks an exposure
+                           # that does NOT clip. rev-3's clipped frames -- and the contrast INVERSION they produced
+                           # (19.4% of differencing frames, measured) -- are not physically realisable and were
+                           # teaching the model an artifact. Exposure scales BOTH captures by the same factor, so
+                           # the lit/unlit ratio is preserved and polarity can never invert. Measured effect:
+                           # inversion 19.4% -> 0.5%, median board contrast +24 -> +35 DN.
+    differencing_ae_target: 250.0   # p99.9 of the lit frame is scaled to this; 5 DN of headroom under the 255 clip
+    differencing_illum_floor: [0.05, 0.3]
+    differencing_illum_sigma_frac: [0.25, 0.45]   # illumination-lobe spread, as a fraction of min(w2, h2) -- not pinned by the brief
+    differencing_shift_px: [0.2, 3.0]
+    dark_greyout_white_thresh: 25   # task #25 remainder: deep-exposure grey-out gate for the differencing branch -- OUTPUT-coupled (99th percentile of the clipped differenced frame below this, ~10% of full scale), not ambient (gate defect found at review: ambient alone doesn't determine output brightness, see dcc/synth.py)
+    dark_greyout_brightness_thresh: -0.9   # ... and for the legacy brightness branch (b below this)
+    dark_greyout_blend: [0.3, 0.7]
+    fpn_p: 0.3   # rev-2 aug pack (task #29): fixed-pattern noise (EMVA 1288; El Gamal & Eltoukhy 2005) -- full-canvas arm only, see dcc/synth.py
+    fpn_col_std: [0.3, 1.2]   # row banding reuses this same per-sample draw at half sigma, not a separate range
+    fpn_prnu_p: 0.5
+    fpn_prnu_std: [0.005, 0.015]
+train:
+  batch: 16   # Rev G pin for the 640 variant: B16 x accum2 (B4x8 is the native-res setting; at 640x480 it is launch-overhead-bound at identical effective batch)
+  accum: 2
+  steps: 250000
+  lr: 3.0e-4
+  lr_floor: 3.0e-6
+  warmup_steps: 1000
+  wd: 1.0e-4
+  clip_norm: 5.0
+  ema_decay: 0.999
+  workers: 12   # back to 12 after the 16-worker config crashed the machine (2026-07-28: 62GiB RAM, ~32 torch loader processes exhausted it); Kaelin accepts the mild loader bottleneck (~115 agg vs GPU's ~121)
+  prefetch_factor: 4
+  val_every: 2500
+  full_val_every: 25000
+  val_subset: 2000
+  match_px: 8.0
+  tau_hm: 0.3
+  wandb:
+    enabled: true
+    project: conv-chart
+    mode: online
+  early_stop:
+    enabled: true
+    patience: 3
+    min_steps: 162000   # Kaelin 2026-07-27 20:00: no early stop before 8am (~12h at 120 samples/s); earliest qualifying full-val boundary is then 175k
+    tail_gate: 0.01
+refiner_train:
+  batch: 256
+  steps: 10000
+  lr: 1.0e-3
+  lr_floor: 1.0e-5
+  warmup_steps: 200
+  wd: 1.0e-4
+  clip_norm: 5.0
+  ema_decay: 0.999
+  workers: 16     # 2026-07-28: 6 -> 16 after the vm.min_free_kbytes/watermark_scale_factor/swappiness
+                  # fix (see /etc/sysctl.d/99-ml-training.conf). Measured 6 workers = ~808 samples/s
+                  # with only ~8 of 24 cores busy, so generation had large headroom. 16 leaves 8
+                  # cores for concurrent eval work. Originally halved from 12 because: The machine hard-crashed TWICE today on
+                  # shared-memory page-reclaim stalls (kswapd soft-lockup 134s in
+                  # shmem_writepage); torch loader workers live in /dev/shm, so fewer
+                  # workers = less shm pressure. The refiner is generation-bound but its
+                  # fast-crop arm (refiner_full_frac 0.08) is cheap -- measured steady
+                  # state was ~1,900 samples/s at 12 workers, so 6 still clears the
+                  # GPU's needs for a 97k-param model on 24x24 crops.
+  val_every: 1000
+
+# ABLATION LEVER (added by tools/cut_ablation.py -- absent from the base).
+loss_form: ce
+
+# ABLATION LEVER (added by tools/cut_ablation.py -- absent from the base).
+sigma_ref: 1.5
+
+# ABLATION LEVER (added by tools/cut_ablation.py -- absent from the base).
+refiner_width: 0.25

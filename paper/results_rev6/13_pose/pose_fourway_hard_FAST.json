@@ -1,0 +1,75 @@
+{
+  "pose_set": "eval_pose_rev6_hard",
+  "n_images": 1500,
+  "ckpt": "runs/abl_nodilate_width_quarter_xsa_s05_30k_rev6/ckpt_latest.pt",
+  "refiner_ckpt": "runs/refiner_rev6/ckpt_0013000.pt",
+  "dc_ckpt": "runs/charuconet_rev6_ft/ckpt_latest.pt",
+  "pnp": "ALL arms use dcc.pipeline.pnp -- isolates the corners, not the PnP implementation; classical numbers therefore differ from eval_classical.py's native output",
+  "units": "rotation deg (geodesic); translation in BOARD SQUARES (square_length_m = 1.0)",
+  "arms": {
+    "ours_coarse": {
+      "n": 1500,
+      "n_solved": 1271,
+      "n_refused": 229,
+      "solve_rate": 0.8473333333333334,
+      "rot_deg": {
+        "median": 0.3733196703786845,
+        "mean": 1.5100185978468919,
+        "p95": 2.412901187832779
+      },
+      "trans_squares": {
+        "median": 0.02622508085216982,
+        "mean": 0.17977223889292748,
+        "p95": 0.2618858322038571
+      }
+    },
+    "ours_refined": {
+      "n": 1500,
+      "n_solved": 1271,
+      "n_refused": 229,
+      "solve_rate": 0.8473333333333334,
+      "rot_deg": {
+        "median": 0.13020201524551836,
+        "mean": 0.9583062328875344,
+        "p95": 1.050420660171962
+      },
+      "trans_squares": {
+        "median": 0.009582419151586493,
+        "mean": 0.1419058066766818,
+        "p95": 0.11926426153753285
+      }
+    },
+    "deep_charuco": {
+      "n": 1500,
+      "n_solved": 1417,
+      "n_refused": 83,
+      "solve_rate": 0.9446666666666667,
+      "rot_deg": {
+        "median": 0.8734222868888718,
+        "mean": 10.77064037724774,
+        "p95": 90.46838994588995
+      },
+      "trans_squares": {
+        "median": 0.07749718656076919,
+        "mean": 1.2615050372720458,
+        "p95": 7.3667638993405635
+      }
+    },
+    "classical": {
+      "n": 1500,
+      "n_solved": 823,
+      "n_refused": 677,
+      "solve_rate": 0.5486666666666666,
+      "rot_deg": {
+        "median": 0.14753462518518698,
+        "mean": 0.9914215033128987,
+        "p95": 2.209091246396404
+      },
+      "trans_squares": {
+        "median": 0.019123231858615454,
+        "mean": 0.07204416939429495,
+        "p95": 0.22296005093856514
+      }
+    }
+  }
+}

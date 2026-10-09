@@ -1,0 +1,363 @@
+{
+  "config": {
+    "input_size": [
+      640,
+      480
+    ],
+    "sigma_hm": 2.0,
+    "sigma_cls": 1.0,
+    "alpha": 2,
+    "beta": 4,
+    "lambda_cls": 1.0,
+    "tau_hm": 0.3,
+    "tau_id": 0.5,
+    "lattice_tol_px": 3.0,
+    "negative_p": 0.05,
+    "scale_range_px": [
+      12,
+      128
+    ],
+    "refiner_jitter_px": 4,
+    "freeze_trunk": false,
+    "attend_div": 8,
+    "attn_blocks": 2,
+    "attn_heads": 8,
+    "rope_lambda_min_cells": 2.5,
+    "xsa": false,
+    "board": {
+      "squares": [
+        5,
+        5
+      ],
+      "dictionary": "DICT_5X5_50",
+      "marker_ids": [
+        0,
+        11
+      ],
+      "marker_ratio": 0.7,
+      "square_length_m": null
+    },
+    "synth": {
+      "render_res": 480,
+      "backgrounds": "/home/kaelin/datasets/coco/train2017",
+      "val_seed": 1000,
+      "train_seed": 2000,
+      "pose_seed": 3000,
+      "val_size": 10000,
+      "refiner_res_mult": 2.5,
+      "refiner_max_corners": 8,
+      "refiner_val_composites": 1250,
+      "refiner_generic_frac": 0.0,
+      "refiner_full_frac": 0.08,
+      "rot_deg": 180,
+      "shear_deg": 35,
+      "translate_frac": 0.45,
+      "perspective_p": 0.8,
+      "tilt_max_deg": 60,
+      "fov_scale": [
+        0.7,
+        1.4
+      ],
+      "bg_hflip_p": 0.5,
+      "prefilter": {
+        "enabled": true,
+        "k": 0.5
+      },
+      "occlusion": {
+        "p": 0.4,
+        "holes": [
+          1,
+          6
+        ],
+        "size": [
+          16,
+          64
+        ]
+      },
+      "cutouts": {
+        "path": "/home/kaelin/datasets/cutouts",
+        "p": 0.35,
+        "max_objects": 3,
+        "scale": [
+          0.08,
+          0.5
+        ]
+      },
+      "photometric": {
+        "gauss_noise_p": 0.5,
+        "noise_std": [
+          3.2,
+          7.1
+        ],
+        "sensor_noise_enabled": true,
+        "sensor_noise_electrons_per_dn": [
+          1.5,
+          30.0
+        ],
+        "sensor_noise_read_std": [
+          1.0,
+          3.0
+        ],
+        "motion_blur_p": 0.5,
+        "motion_blur_kmax": 5,
+        "gauss_blur_p": 0.25,
+        "speckle_p": 0.5,
+        "speckle_std": [
+          0.03,
+          0.12
+        ],
+        "mult_noise_p": 0.5,
+        "mult_noise_range": [
+          0.95,
+          1.05
+        ],
+        "brightness_p": 0.5,
+        "brightness_range": [
+          -0.98,
+          0.35
+        ],
+        "brightness_add_floor": -0.96,
+        "contrast_p": 0.5,
+        "contrast_range": [
+          0.8,
+          1.2
+        ],
+        "rgb_shift_p": 0.5,
+        "rgb_shift_limit": 20,
+        "glare_p": 0.3,
+        "ghost_p": 0.25,
+        "ghost_alpha": [
+          0.1,
+          0.5
+        ],
+        "ghost_shift_px": [
+          1,
+          4
+        ],
+        "specular_p": 0.15,
+        "specular_strength": [
+          30,
+          220
+        ],
+        "specular_exponent": [
+          20,
+          200
+        ],
+        "specular_spread_frac": [
+          0.08,
+          0.2
+        ],
+        "droplet_p": 0.1,
+        "droplet_n": [
+          1,
+          4
+        ],
+        "droplet_mode_b_p": 0.5,
+        "droplet_bokeh_radius": [
+          4,
+          18
+        ],
+        "droplet_bokeh_brightness": [
+          40,
+          220
+        ],
+        "droplet_refractive_radius": [
+          6,
+          20
+        ],
+        "droplet_refractive_minify": [
+          0.15,
+          0.4
+        ],
+        "droplet_refractive_alpha": [
+          0.6,
+          0.9
+        ],
+        "droplet_refractive_blur_sigma": [
+          2,
+          4
+        ],
+        "droplet_hole_alpha_thresh": 0.7,
+        "droplet_hole_radius_thresh": 8,
+        "vignette_p": 0.5,
+        "vignette_strength": [
+          0.05,
+          0.25
+        ],
+        "ink_contrast_p": 0.3,
+        "ink_contrast_scale": [
+          1.0,
+          1.6
+        ],
+        "differencing_p": 0.1,
+        "differencing_ambient": [
+          0.05,
+          0.95
+        ],
+        "differencing_illum_peak": [
+          0.15,
+          0.9
+        ],
+        "differencing_autoexposure": true,
+        "differencing_ae_target": 250.0,
+        "differencing_illum_floor": [
+          0.05,
+          0.3
+        ],
+        "differencing_illum_sigma_frac": [
+          0.25,
+          0.45
+        ],
+        "differencing_shift_px": [
+          0.2,
+          3.0
+        ],
+        "dark_greyout_white_thresh": 25,
+        "dark_greyout_brightness_thresh": -0.9,
+        "dark_greyout_blend": [
+          0.3,
+          0.7
+        ],
+        "fpn_p": 0.3,
+        "fpn_col_std": [
+          0.3,
+          1.2
+        ],
+        "fpn_prnu_p": 0.5,
+        "fpn_prnu_std": [
+          0.005,
+          0.015
+        ]
+      }
+    },
+    "train": {
+      "batch": 16,
+      "accum": 2,
+      "steps": 250000,
+      "lr": 0.0003,
+      "lr_floor": 3e-06,
+      "warmup_steps": 1000,
+      "wd": 0.0001,
+      "clip_norm": 5.0,
+      "ema_decay": 0.999,
+      "workers": 12,
+      "prefetch_factor": 4,
+      "val_every": 2500,
+      "full_val_every": 25000,
+      "val_subset": 2000,
+      "match_px": 8.0,
+      "tau_hm": 0.3,
+      "wandb": {
+        "enabled": true,
+        "project": "conv-chart",
+        "mode": "online"
+      },
+      "early_stop": {
+        "enabled": true,
+        "patience": 3,
+        "min_steps": 162000,
+        "tail_gate": 0.01
+      }
+    },
+    "refiner_train": {
+      "batch": 256,
+      "steps": 10000,
+      "lr": 0.001,
+      "lr_floor": 1e-05,
+      "warmup_steps": 200,
+      "wd": 0.0001,
+      "clip_norm": 5.0,
+      "ema_decay": 0.999,
+      "workers": 16,
+      "val_every": 1000
+    }
+  },
+  "distributions": {
+    "octave_frac": [
+      0.1209983150800337,
+      0.2940185341196293,
+      0.29517691659646167,
+      0.2898062342038753
+    ],
+    "octave_ok": true,
+    "negative_frac": 0.0504,
+    "negative_ok": true,
+    "occlusion_frac": 0.4246,
+    "occlusion_ok": true,
+    "visible_count_hist": [
+      10,
+      5,
+      1,
+      7,
+      21,
+      28,
+      62,
+      135,
+      227,
+      359,
+      496,
+      435,
+      724,
+      679,
+      672,
+      1025,
+      4610
+    ]
+  },
+  "roundtrip_max_px": 0.0,
+  "repeatability_ok": true,
+  "refiner": {
+    "crops": 9854,
+    "dx_frac": [
+      0.11436979906636899,
+      0.12401055408970976,
+      0.13091130505378526,
+      0.11924091739395169,
+      0.13212908463568093,
+      0.12989648873553886,
+      0.1333468642175766,
+      0.11609498680738786
+    ],
+    "dy_frac": [
+      0.11558757864826466,
+      0.12786685609904608,
+      0.13091130505378526,
+      0.12238684798051552,
+      0.12776537446722144,
+      0.13141871321290846,
+      0.13040389689466206,
+      0.1136594276435965
+    ],
+    "hist_ok": true,
+    "content_median_px": 0.05272076321881583,
+    "content_p90_px": 0.22700652715928063,
+    "content_max_px": 0.5563952464589549,
+    "content_ok": true,
+    "content_n": 100
+  },
+  "versions": {
+    "numpy": "2.3.1",
+    "cv2": "4.10.0",
+    "skimage": "0.25.2"
+  },
+  "backgrounds_sha1": "499eeed0d357cfa263ae3008db8ee00d99bdc9ec",
+  "gates": {
+    "s_px octave flatness": true,
+    "negative fraction": true,
+    "occlusion incidence": true,
+    "round-trip max px": true,
+    "repeatability (subprocess byte-identical)": true,
+    "refiner d histogram": true,
+    "refiner content check": true
+  },
+  "generator_fingerprint": {
+    "files": {
+      "dcc/board.py": "384d49861b22398d54ec8182a2ac326873c415ea",
+      "dcc/synth.py": "f1af0749a7267958c7ca2bf48d34ec77d85a42f6",
+      "dcc/targets.py": "91013f6284bc46d396a669f0a1438cc512d40700",
+      "dcc/dataset.py": "570620d64c8b79ce695856e9438401a339feb022"
+    },
+    "config_sha1": "1a06f94eef66fa86642c1396d07568b7d1331206"
+  },
+  "all_gates_passed": true
+}

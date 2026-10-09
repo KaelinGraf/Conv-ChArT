@@ -1,0 +1,28 @@
+{
+ "cpu": "Intel(R) Core(TM) Ultra 9 285K",
+ "gpu": "NVIDIA GeForce RTX 5090",
+ "ort": "1.28.0",
+ "ort_providers": [
+  "AzureExecutionProvider",
+  "CPUExecutionProvider"
+ ],
+ "torch": "2.8.0+cu129",
+ "n_runs": 30,
+ "ort_cpu_4thr_detector_222k_ms": 152.59,
+ "ort_cpu_8thr_detector_222k_ms": 129.87,
+ "torch_cuda_fp16_detector_222k_ms": 1.7,
+ "torch_cuda_fp32_detector_222k_ms": 3.88,
+ "ort_cpu_4thr_detector_882k_ms": 191.78,
+ "ort_cpu_8thr_detector_882k_ms": 151.22,
+ "torch_cuda_fp16_detector_882k_ms": 2.04,
+ "torch_cuda_fp32_detector_882k_ms": 4.49,
+ "ort_cpu_4thr_refiner_44crops_sequential_batch1_ms": 6.45,
+ "torch_cpu_4thr_refiner_44crops_batched_ms": 5.56,
+ "torch_cuda_fp32_refiner_44crops_batched_ms": 0.16,
+ "ort_cuda_ep": {
+  "env": "conda wireless_inference, onnxruntime-gpu 1.30.0 CUDA 13 build, CUDAExecutionProvider, fp32, RTX 5090, median of 30 incl. H2D/D2H",
+  "detector_222k_ms": 5.25,
+  "detector_882k_ms": 5.54,
+  "refiner_44crops_batched_ms": 0.26
+ }
+}

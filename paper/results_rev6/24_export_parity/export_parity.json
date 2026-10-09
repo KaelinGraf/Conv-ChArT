@@ -1,0 +1,220 @@
+{
+  "gate": "P15 fp16 export parity",
+  "device": "cuda",
+  "n_val": 1000,
+  "refiner_ckpt": "runs/ref_s15_10k_rev6/ckpt_0010000.pt",
+  "thresholds": {
+    "d_corner_px": 0.05,
+    "id_diff_pct": 0.1
+  },
+  "half": "both",
+  "onnx_runtime_check": "NOT RUN -- onnxruntime absent from the MLWS env; this gate covers export validity and fp16 numerics only",
+  "tiers": {
+    "222k": {
+      "ckpt": "runs/rel_w25_lam2_100k_rev6/ckpt_0100000.pt",
+      "step": 100000,
+      "config_input_size": [
+        640,
+        480
+      ],
+      "n_params": 222138,
+      "onnx": {
+        "path": "paper/results_rev6/24_export_parity/detector_222k.onnx",
+        "opset": 17,
+        "n_nodes": 284,
+        "ops": [
+          "Add",
+          "Cast",
+          "Clip",
+          "Concat",
+          "Constant",
+          "Conv",
+          "Div",
+          "Erf",
+          "Expand",
+          "Gather",
+          "LayerNormalization",
+          "MatMul",
+          "MaxPool",
+          "Mul",
+          "ReduceL2",
+          "ReduceSum",
+          "Relu",
+          "Reshape",
+          "Resize",
+          "Shape",
+          "Sigmoid",
+          "Slice",
+          "Softmax",
+          "Sqrt",
+          "Sub",
+          "Transpose"
+        ],
+        "banned_ops_present": [],
+        "checker": "PASS",
+        "size_mb": 2.05
+      },
+      "parity_fp16": {
+        "n_images": 1000,
+        "n_corners_fp32": 11949,
+        "n_corners_fp16": 11948,
+        "n_matched": 11943,
+        "unmatched_fp32": 6,
+        "unidentified_fp32": 424,
+        "unidentified_fp16": 427,
+        "n_gt_0p05px": 107,
+        "n_gt_1px": 3,
+        "frac_gt_0p05px_pct": 0.8959222975801725,
+        "d_corner_mean": 0.0028155701499260467,
+        "d_corner_p95": 0.00156037602310434,
+        "d_corner_max": 4.020603640637703,
+        "id_diff_pct": 0.1004772670183371,
+        "corner_count_delta_pct": -0.008368901163277261
+      },
+      "verdict": "FAIL",
+      "failures": [
+        "0.8959% of corners exceed 0.05 px (n=107, max 4.021 px)",
+        "ID 0.1005% >= 0.1%"
+      ]
+    },
+    "502k": {
+      "ckpt": "runs/rel_w375_lam15_100k_rev6/ckpt_0100000.pt",
+      "step": 100000,
+      "config_input_size": [
+        640,
+        480
+      ],
+      "n_params": 502322,
+      "onnx": {
+        "path": "paper/results_rev6/24_export_parity/detector_502k.onnx",
+        "opset": 17,
+        "n_nodes": 263,
+        "ops": [
+          "Add",
+          "Cast",
+          "Concat",
+          "Constant",
+          "Conv",
+          "Div",
+          "Erf",
+          "Gather",
+          "LayerNormalization",
+          "MatMul",
+          "MaxPool",
+          "Mul",
+          "Relu",
+          "Reshape",
+          "Resize",
+          "Shape",
+          "Sigmoid",
+          "Slice",
+          "Softmax",
+          "Sqrt",
+          "Sub",
+          "Transpose"
+        ],
+        "banned_ops_present": [],
+        "checker": "PASS",
+        "size_mb": 3.7
+      },
+      "parity_fp16": {
+        "n_images": 1000,
+        "n_corners_fp32": 12130,
+        "n_corners_fp16": 12132,
+        "n_matched": 12130,
+        "unmatched_fp32": 0,
+        "unidentified_fp32": 269,
+        "unidentified_fp16": 269,
+        "n_gt_0p05px": 101,
+        "n_gt_1px": 3,
+        "frac_gt_0p05px_pct": 0.832646331409728,
+        "d_corner_mean": 0.0022472979194528182,
+        "d_corner_p95": 0.001559941861287052,
+        "d_corner_max": 3.8777182465611664,
+        "id_diff_pct": 0.0,
+        "corner_count_delta_pct": 0.016488046166529265
+      },
+      "verdict": "FAIL",
+      "failures": [
+        "0.8326% of corners exceed 0.05 px (n=101, max 3.878 px)"
+      ]
+    },
+    "882k": {
+      "ckpt": "runs/rel_w882_c2_100k_rev6/ckpt_0100000.pt",
+      "step": 100000,
+      "config_input_size": [
+        640,
+        480
+      ],
+      "n_params": 882402,
+      "onnx": {
+        "path": "paper/results_rev6/24_export_parity/detector_882k.onnx",
+        "opset": 17,
+        "n_nodes": 263,
+        "ops": [
+          "Add",
+          "Cast",
+          "Concat",
+          "Constant",
+          "Conv",
+          "Div",
+          "Erf",
+          "Gather",
+          "LayerNormalization",
+          "MatMul",
+          "MaxPool",
+          "Mul",
+          "Relu",
+          "Reshape",
+          "Resize",
+          "Shape",
+          "Sigmoid",
+          "Slice",
+          "Softmax",
+          "Sqrt",
+          "Sub",
+          "Transpose"
+        ],
+        "banned_ops_present": [],
+        "checker": "PASS",
+        "size_mb": 5.74
+      },
+      "parity_fp16": {
+        "n_images": 1000,
+        "n_corners_fp32": 12222,
+        "n_corners_fp16": 12222,
+        "n_matched": 12222,
+        "unmatched_fp32": 0,
+        "unidentified_fp32": 101,
+        "unidentified_fp16": 103,
+        "n_gt_0p05px": 104,
+        "n_gt_1px": 2,
+        "frac_gt_0p05px_pct": 0.8509245622647684,
+        "d_corner_mean": 0.002432971313276223,
+        "d_corner_p95": 0.0015593045427214655,
+        "d_corner_max": 3.8777182465611664,
+        "id_diff_pct": 0.016363933889707086,
+        "corner_count_delta_pct": 0.0
+      },
+      "verdict": "FAIL",
+      "failures": [
+        "0.8509% of corners exceed 0.05 px (n=104, max 3.878 px)"
+      ]
+    }
+  },
+  "refiner_onnx": {
+    "path": "paper/results_rev6/24_export_parity/refiner.onnx",
+    "opset": 17,
+    "n_nodes": 20,
+    "ops": [
+      "Constant",
+      "Conv",
+      "DepthToSpace",
+      "Relu",
+      "Slice"
+    ],
+    "banned_ops_present": [],
+    "checker": "PASS",
+    "size_mb": 0.37
+  }
+}

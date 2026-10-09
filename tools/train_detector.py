@@ -472,6 +472,7 @@ def main():
     if args.retarget_from and not args.freeze_trunk:
         parser.error("--retarget-from requires --freeze-trunk")
 
+    import fnmatch
     import time
     from functools import partial
 
@@ -504,6 +505,7 @@ def main():
                                                                             memory_format=torch.channels_last)
 
     freeze = args.freeze_trunk or cfg.get("freeze_trunk", False)
+    bn_types = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
     model.train()
     if freeze:
         # Retarget path ONLY: everything except cls.* freezes (P12). This loop
@@ -512,7 +514,6 @@ def main():
         # 2026-07-27 after three prior gates missed it).
         for name, p in model.named_parameters():
             p.requires_grad_(name.startswith("cls."))
-        bn_types = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
         for name, m in model.named_modules():
             if not name.startswith("cls") and isinstance(m, bn_types):
                 m.eval()
@@ -526,8 +527,38 @@ def main():
         base_ckpt = load_retarget_ckpt(args.retarget_from, model, map_location=device)
         retargeted_from = {"path": str(args.retarget_from), "board": (base_ckpt.get("cfg") or {}).get("board")}
 
+    # FINE-TUNE ENTRY (Kaelin 2026-10-08, "the absolute minimum amount of fine-tuning required" to
+    # move to a new board). cfg["finetune"] = {from, lr_mult, reinit?}: load a trained checkpoint's
+    # weights (EMA preferred -- the deployed weights) into the model, then train from step 0 on a
+    # FRESH optimizer and schedule. Distinct from --resume (continues the step counter, so a 100k
+    # checkpoint would sit on the LR floor) and from --retarget-from (drops cls.* for a different
+    # corner count). WHICH parameters train, and at what fraction of the scheduled LR, is lr_mult
+    # ({fnmatch pattern: multiplier}, see dcc.trainutil.param_groups) -- anything unmatched is
+    # frozen and its BatchNorm holds its running stats, as the freeze_trunk path does. reinit lists
+    # patterns whose weights are NOT loaded (fresh init), e.g. ["cls.*"] to test re-init vs warm start.
+    ft = cfg.get("finetune")
+    finetuned_from = None
+    if ft:
+        assert not (freeze or args.resume or args.retarget_from), "finetune: is its own entry path"
+        src = torch.load(ft["from"], map_location=device, weights_only=False)
+        sd = src.get("ema") or src["model"]
+        skip = {k for k in sd if any(fnmatch.fnmatchcase(k, pat) for pat in ft.get("reinit", []))}
+        res = model.load_state_dict({k: v for k, v in sd.items() if k not in skip}, strict=False)
+        assert set(res.missing_keys) == skip and not res.unexpected_keys, (res.missing_keys, res.unexpected_keys)
+        finetuned_from = {"path": str(ft["from"]), "step": src.get("step"),
+                          "board": (src.get("cfg") or {}).get("board"), "finetune": ft}
     ema = EMA(model, decay=tcfg["ema_decay"])
-    optim = torch.optim.AdamW(param_groups(model, tcfg["wd"]), lr=tcfg["lr"], betas=(0.9, 0.999))
+    optim = torch.optim.AdamW(param_groups(model, tcfg["wd"], lr_mult=ft["lr_mult"] if ft else None),
+                              lr=tcfg["lr"], betas=(0.9, 0.999))
+    if ft:
+        for m in model.modules():
+            if isinstance(m, bn_types) and not any(p.requires_grad for p in m.parameters(recurse=False)):
+                m.eval()
+        n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"[train_detector] finetune from {ft['from']} (step {finetuned_from['step']}): "
+              f"{n_trainable:,} of {sum(p.numel() for p in model.parameters()):,} params trainable, "
+              f"lr_mult={ft['lr_mult']}, reinit={ft.get('reinit', [])}", flush=True)
+        retargeted_from = finetuned_from   # same provenance slot in the checkpoint; dict is self-describing
 
     run_dir = Path("runs") / args.name
     logger = JsonlLogger(run_dir / "metrics.jsonl")
@@ -599,7 +630,7 @@ def main():
                                               tcfg["clip_norm"])
         lr = cosine_lr(step, total_steps, tcfg["lr"], tcfg["lr_floor"], tcfg["warmup_steps"])
         for g in optim.param_groups:
-            g["lr"] = lr
+            g["lr"] = lr * g.get("lr_mult", 1.0)
         optim.step()
         optim.zero_grad(set_to_none=True)
         ema.update(model)
@@ -613,7 +644,8 @@ def main():
         step += 1
         micro, accum_loss = 0, 0.0
         train_fields = {"loss": avg_loss, "lr": lr, "grad_norm": float(grad_norm),
-                         "samples_per_s": n_samples / elapsed if elapsed > 0 else 0.0}
+                         "samples_per_s": n_samples / elapsed if elapsed > 0 else 0.0,
+                         "peak_mem_mb": torch.cuda.max_memory_allocated() / 2**20}
         logger.log(step=step, **train_fields)
         _wandb_log(wandb_run, step, **train_fields)
         if step % 10 == 0 or step <= 10:
@@ -680,6 +712,14 @@ def main():
     elapsed = time.time() - t0 - val_time
     print(f"[train_detector] done: step={step} train_elapsed={elapsed:.1f}s val_elapsed={val_time:.1f}s "
           f"samples/s={n_samples / elapsed if elapsed > 0 else 0.0:.2f}")
+    # One record of what the run cost, so a summary tool never has to reconstruct it from the stream.
+    logger.log(step=step, done={"train_elapsed_s": elapsed, "val_elapsed_s": val_time,
+                                "wall_elapsed_s": time.time() - t0,
+                                "samples_per_s": n_samples / elapsed if elapsed > 0 else 0.0,
+                                "n_params": sum(p.numel() for p in model.parameters()),
+                                "n_trainable": sum(p.numel() for p in model.parameters() if p.requires_grad),
+                                "peak_mem_mb": torch.cuda.max_memory_allocated() / 2**20,
+                                "peak_reserved_mb": torch.cuda.max_memory_reserved() / 2**20})
     _wandb_finish(wandb_run)
 
 

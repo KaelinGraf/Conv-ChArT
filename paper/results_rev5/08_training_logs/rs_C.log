@@ -1,0 +1,42 @@
+[defocus_blur] Gaussian blur kernel (px)
+     defocus_blur =       0: recall  94.4%  id  93.4%  err_med refined 0.1100 / coarse 0.4486 px  (n_gt=824)
+     defocus_blur =       3: recall  95.8%  id  94.5%  err_med refined 0.1245 / coarse 0.4209 px  (n_gt=848)
+     defocus_blur =       5: recall  92.3%  id  94.4%  err_med refined 0.1305 / coarse 0.4314 px  (n_gt=857)
+     defocus_blur =       7: recall  97.1%  id  96.6%  err_med refined 0.1289 / coarse 0.4251 px  (n_gt=824)
+     defocus_blur =       9: recall  93.2%  id  96.3%  err_med refined 0.1840 / coarse 0.4449 px  (n_gt=843)
+  -> paper/results_rev4/robustness/defocus_blur.json
+[motion_blur] motion blur kernel (px)
+      motion_blur =       0: recall  94.4%  id  93.4%  err_med refined 0.1100 / coarse 0.4486 px  (n_gt=824)
+      motion_blur =       3: recall  95.4%  id  95.4%  err_med refined 0.1203 / coarse 0.4202 px  (n_gt=848)
+      motion_blur =       5: recall  93.7%  id  94.6%  err_med refined 0.1618 / coarse 0.4329 px  (n_gt=857)
+      motion_blur =       7: recall  97.2%  id  96.1%  err_med refined 0.1966 / coarse 0.4466 px  (n_gt=824)
+      motion_blur =       9: recall  87.4%  id  90.5%  err_med refined 0.4105 / coarse 0.5462 px  (n_gt=843)
+  -> paper/results_rev4/robustness/motion_blur.json
+[vignette] vignette strength
+         vignette =     0.0: recall  95.6%  id  97.0%  err_med refined 0.1358 / coarse 0.4454 px  (n_gt=824)
+         vignette =    0.05: recall  94.3%  id  93.9%  err_med refined 0.1499 / coarse 0.4263 px  (n_gt=848)
+         vignette =    0.12: recall  92.2%  id  94.4%  err_med refined 0.1745 / coarse 0.4531 px  (n_gt=857)
+         vignette =     0.2: recall  96.1%  id  97.5%  err_med refined 0.1416 / coarse 0.4322 px  (n_gt=824)
+         vignette =    0.25: recall  93.5%  id  98.0%  err_med refined 0.1439 / coarse 0.4164 px  (n_gt=843)
+  -> paper/results_rev4/robustness/vignette.json
+[specular] specular lobe strength (DN)
+         specular =       0: recall  95.0%  id  96.0%  err_med refined 0.1467 / coarse 0.4556 px  (n_gt=824)
+         specular =      60: recall  95.2%  id  93.2%  err_med refined 0.1368 / coarse 0.4308 px  (n_gt=848)
+         specular =     120: recall  94.3%  id  92.7%  err_med refined 0.1738 / coarse 0.4472 px  (n_gt=857)
+         specular =     180: recall  96.2%  id  96.1%  err_med refined 0.1428 / coarse 0.4415 px  (n_gt=824)
+         specular =     220: recall  88.7%  id  94.0%  err_med refined 0.2101 / coarse 0.4435 px  (n_gt=843)
+  -> paper/results_rev4/robustness/specular.json
+[ink_contrast] NIR ink contrast scale
+     ink_contrast =     1.0: recall  97.8%  id  96.5%  err_med refined 0.1440 / coarse 0.4489 px  (n_gt=824)
+     ink_contrast =    1.15: recall  96.1%  id  96.3%  err_med refined 0.1152 / coarse 0.4206 px  (n_gt=848)
+     ink_contrast =     1.3: recall  87.9%  id  92.6%  err_med refined 0.2328 / coarse 0.4636 px  (n_gt=857)
+     ink_contrast =    1.45: recall  91.5%  id  89.1%  err_med refined 0.2341 / coarse 0.4812 px  (n_gt=824)
+     ink_contrast =     1.6: recall  84.5%  id  81.3%  err_med refined 0.3557 / coarse 0.4715 px  (n_gt=843)
+  -> paper/results_rev4/robustness/ink_contrast.json
+[droplets] adherent droplets (n)
+         droplets =       0: recall  94.7%  id  95.5%  err_med refined 0.1536 / coarse 0.4508 px  (n_gt=824)
+         droplets =       1: recall  92.6%  id  94.9%  err_med refined 0.1475 / coarse 0.4237 px  (n_gt=847)
+         droplets =       2: recall  94.3%  id  91.7%  err_med refined 0.1487 / coarse 0.4416 px  (n_gt=857)
+         droplets =       4: recall  95.6%  id  96.4%  err_med refined 0.1655 / coarse 0.4381 px  (n_gt=823)
+         droplets =       6: recall  90.8%  id  95.5%  err_med refined 0.1635 / coarse 0.4194 px  (n_gt=838)
+  -> paper/results_rev4/robustness/droplets.json

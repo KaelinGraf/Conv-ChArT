@@ -1,0 +1,27 @@
+# Inter-method comparison -- detection recall, % (worst case in parentheses)
+
+Higher is better. Cells are `mean (worst)` across the factor's swept range.
+
+**Reading notes.** Classical OpenCV only reports corners it has already identified, so its ID accuracy is ~100% among matched corners by construction and is not comparable -- read its **recall** instead (its ID cells show `n/c`). Deep ChArUco is **unrefined** (their RefineNet is not run), so its localisation belongs against our **coarse** column, not our refined one. All arms are scored on identical frames.
+
+| Factor           | Ours (coarse) | Ours (refined) | Deep ChArUco | Classical   |
+|------------------|---------------|----------------|--------------|-------------|
+| brightness       | 96.5 (91.0)   | 96.5 (90.9)    | 82.5 (74.1)  | 30.3 (19.3) |
+| contrast         | 98.5 (97.3)   | 98.4 (97.2)    | 85.6 (81.2)  | 36.1 (32.9) |
+| darkness         | 92.3 (73.5)   | 92.3 (73.5)    | 54.5 (0.2)   | 11.1 (0.0)  |
+| defocus_blur     | 98.3 (96.9)   | 98.0 (96.2)    | 86.8 (84.9)  | 32.8 (19.1) |
+| diff_ambient     | 99.3 (98.0)   | 99.2 (98.0)    | 87.1 (83.1)  | 30.3 (21.2) |
+| diff_ghosting    | 99.2 (98.2)   | 99.1 (98.2)    | 87.8 (86.3)  | 30.9 (27.0) |
+| diff_ratio       | 99.1 (97.9)   | 99.0 (97.9)    | 85.1 (75.7)  | 27.7 (9.8)  |
+| distance         | 97.6 (93.5)   | 97.5 (93.5)    | 83.2 (42.7)  | 30.6 (0.6)  |
+| distance_extrap  | 76.5 (0.0)    | 76.4 (0.0)     | 55.3 (0.0)   | 9.3 (0.0)   |
+| droplets         | 98.3 (97.1)   | 98.2 (97.0)    | 85.4 (83.0)  | 36.8 (31.9) |
+| ink_contrast     | 96.4 (94.7)   | 96.3 (94.3)    | 76.0 (58.5)  | 26.3 (11.3) |
+| motion_blur      | 97.9 (95.9)   | 97.7 (95.1)    | 84.6 (76.8)  | 28.8 (12.5) |
+| object_occlusion | 98.4 (96.7)   | 98.3 (96.6)    | 86.3 (85.7)  | 35.5 (31.6) |
+| occlusion        | 98.0 (96.6)   | 97.9 (96.5)    | 85.6 (82.7)  | 34.1 (25.1) |
+| rotation         | 98.1 (97.4)   | 98.1 (97.4)    | 92.7 (89.5)  | 51.7 (48.8) |
+| sensor_noise_K   | 97.4 (91.6)   | 96.9 (90.0)    | 67.7 (13.8)  | 25.9 (2.6)  |
+| specular         | 97.4 (96.0)   | 97.3 (95.9)    | 85.3 (84.0)  | 33.9 (30.3) |
+| tilt             | 97.5 (94.4)   | 97.4 (94.3)    | 92.8 (90.0)  | 53.8 (51.6) |
+| vignette         | 98.0 (97.2)   | 98.0 (97.1)    | 86.3 (80.4)  | 37.0 (34.2) |

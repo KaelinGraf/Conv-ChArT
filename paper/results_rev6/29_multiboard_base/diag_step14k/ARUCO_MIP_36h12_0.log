@@ -1,0 +1,8 @@
+
+[detector] ckpt=paper/results_rev6/29_multiboard_base/diag_step14k/ckpt_latest_copy.pt step=14000 config=configs/mb15_eval_ARUCO_MIP_36h12_0.yaml n=200 synth_hash=8e1ec582c99d
+  val_loss=2.7293724966049195
+  M-01: mean=0.428px median=0.416px p95=0.755px tail_frac_gt4px=0.0000 n_matched=2322
+  M-02 by octave: {'12-16': 0.9030303030303031, '16-32': 0.9261025029797377, '32-64': 0.9120111731843575, '64-128': 0.9596122778675282}
+  M-04: accuracy=0.2511 by_octave={'12-16': 0.25838926174496646, '16-32': 0.26126126126126126, '32-64': 0.25267993874425726, '64-128': 0.23232323232323232}
+
+wrote paper/results_rev6/29_multiboard_base/diag_step14k/perboard_ARUCO_MIP_36h12_0.json

@@ -1,0 +1,91 @@
+{
+ "frames": 128,
+ "batch": 16,
+ "note": "Gradient share of the two heads on the shared trunk, per class-head loss form, at FIXED weights.\nFor each checkpoint: same 128 SynthVal frames (stratified over s), bf16 autocast forward as in training,\nL_hm = BCE(hm)/N, L_cls = lambda * {focal|bce}(cls)/N. Reports loss values, trunk-gradient L2 norms from each\nterm alone, their ratio, and the cosine between the two trunk gradients. The class form is swapped on the\nsame weights, so the form's effect is isolated from the training trajectory.",
+ "rows": {
+  "bce_bce_35k": {
+   "ckpt": "runs/abl_wh_ce_35k_rev6/ckpt_0035000.pt",
+   "trained_cls_form": "ce",
+   "lambda_cls": 1.0,
+   "trunk_params": 842097,
+   "focal": {
+    "L_hm": 1.0945349633693695,
+    "L_cls": 0.32957137282937765,
+    "loss_ratio_cls_over_hm": 0.3011062998068506,
+    "trunk_grad_norm_hm": 23.912033557891846,
+    "trunk_grad_norm_cls": 21.09355455636978,
+    "trunk_grad_ratio_cls_over_hm": 0.8821313547131644,
+    "cls_share_of_trunk_grad": 0.46868745505151027,
+    "blocks_grad_ratio_cls_over_hm": 1.508918622249686,
+    "cosine_hm_vs_cls_trunk_grad": 0.2848863024264574
+   },
+   "ce": {
+    "L_hm": 1.0945349633693695,
+    "L_cls": 0.5793682634830475,
+    "loss_ratio_cls_over_hm": 0.5293282379025565,
+    "trunk_grad_norm_hm": 23.925177693367004,
+    "trunk_grad_norm_cls": 23.508486807346344,
+    "trunk_grad_ratio_cls_over_hm": 0.9825835823933636,
+    "cls_share_of_trunk_grad": 0.49560764606312047,
+    "blocks_grad_ratio_cls_over_hm": 1.291955783801305,
+    "cosine_hm_vs_cls_trunk_grad": 0.29390199203044176
+   }
+  },
+  "bce_focal_35k": {
+   "ckpt": "runs/abl_lx_wh_hmce_clsfocal_35k_rev6/ckpt_0035000.pt",
+   "trained_cls_form": "focal",
+   "lambda_cls": 1.0,
+   "trunk_params": 842097,
+   "focal": {
+    "L_hm": 1.0460200086236,
+    "L_cls": 0.14070117473602295,
+    "loss_ratio_cls_over_hm": 0.13451097835228207,
+    "trunk_grad_norm_hm": 20.408188700675964,
+    "trunk_grad_norm_cls": 10.20915012806654,
+    "trunk_grad_ratio_cls_over_hm": 0.5002477327999417,
+    "cls_share_of_trunk_grad": 0.33344341861881677,
+    "blocks_grad_ratio_cls_over_hm": 0.7396898069513368,
+    "cosine_hm_vs_cls_trunk_grad": 0.1583080729469657
+   },
+   "ce": {
+    "L_hm": 1.0460200086236,
+    "L_cls": 14.994485974311829,
+    "loss_ratio_cls_over_hm": 14.334798427080038,
+    "trunk_grad_norm_hm": 20.448655247688293,
+    "trunk_grad_norm_cls": 796.1783638000488,
+    "trunk_grad_ratio_cls_over_hm": 38.935487647289484,
+    "cls_share_of_trunk_grad": 0.9749596146457004,
+    "blocks_grad_ratio_cls_over_hm": 233.86830122203756,
+    "cosine_hm_vs_cls_trunk_grad": 0.03365395171567798
+   }
+  },
+  "release_882k_100k": {
+   "ckpt": "runs/rel_w882_c2_100k_rev6/ckpt_0100000.pt",
+   "trained_cls_form": "focal",
+   "lambda_cls": 2.0,
+   "trunk_params": 842097,
+   "focal": {
+    "L_hm": 0.9544752649962902,
+    "L_cls": 0.17725603748112917,
+    "loss_ratio_cls_over_hm": 0.18571045681505233,
+    "trunk_grad_norm_hm": 20.61850929260254,
+    "trunk_grad_norm_cls": 11.758874334394932,
+    "trunk_grad_ratio_cls_over_hm": 0.570306716529393,
+    "cls_share_of_trunk_grad": 0.36318173419639577,
+    "blocks_grad_ratio_cls_over_hm": 0.6998203018086058,
+    "cosine_hm_vs_cls_trunk_grad": 0.3063059775158763
+   },
+   "ce": {
+    "L_hm": 0.9544752649962902,
+    "L_cls": 18.793692767620087,
+    "loss_ratio_cls_over_hm": 19.690078367502938,
+    "trunk_grad_norm_hm": 20.61516284942627,
+    "trunk_grad_norm_cls": 803.6749267578125,
+    "trunk_grad_ratio_cls_over_hm": 38.984650891573196,
+    "cls_share_of_trunk_grad": 0.9749904031246462,
+    "blocks_grad_ratio_cls_over_hm": 203.21843187181778,
+    "cosine_hm_vs_cls_trunk_grad": 0.10681106057018042
+   }
+  }
+ }
+}

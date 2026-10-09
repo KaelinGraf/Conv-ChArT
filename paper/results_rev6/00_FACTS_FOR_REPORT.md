@@ -522,6 +522,14 @@ Source: paper §4.6 and Appendix C (tables), `R6/08_ablations/*/train_metrics.md
   p95 per pp of identity); 502k 1.5 0.7122 / 98.98; 2.0 0.7208 / 99.09; 3.0 0.7234 / 99.12; 4.0 0.7262 /
   99.29 (1.5 is the only strictly free lever at 502k, hence the release value); 222k 0.5 0.7318 / 91.96;
   2.0 0.7580 / 97.80; 4.0 0.7703 / 97.78.
+- **Why focal on the class head moves localisation** (measured 2026-10-09, `R6/12_loss/cls_form_gradient_share.md`):
+  on the same frozen weights and frames, the class head's share of the shared trunk's gradient is 50% in the
+  all-BCE 882k arm but 33-36% in the focal-class arms (on the attention blocks the class head goes from 1.29 : 1
+  to 0.70-0.74 : 1 against the heatmap); scoring a focal-trained class head with BCE gives a class loss 14-20x the
+  heatmap loss, because focal stops pushing the ~19,200 easy background cells per channel that `read_ids` never
+  reads. The two heads' trunk gradients are nearly orthogonal (cosine 0.03-0.31). A snapshot consistent with the
+  loss-balance mechanism, not a proof: AdamW normalises per parameter, and the identity cost of focal has no
+  measured mechanism.
 - `sigma_cls` is null in both directions at 502k (0.5 -> 0.7110 / 98.87; 2.0 -> 0.7104 / 98.80; control
   0.7139 / 98.80): one H/4 cell is four input px, so sub-pixel class-target structure is unrecoverable.
 - `sigma_ref` (refiner target width) null: median 0.0937 vs 0.0969 px at 0.75 and 1.5, inside the median

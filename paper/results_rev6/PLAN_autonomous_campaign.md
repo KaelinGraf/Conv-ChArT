@@ -1074,3 +1074,11 @@ Found while splitting: `plot_four_way.py`'s darkness override (found+ID, designe
 Fixed; `fig2a`, `fig6b`, `fig6c` and 27's `fourway_PANEL_{id_acc,err_median}transfer_*` regenerated, recall grids
 byte-identical, no table number affected. `05_comparison/figures_L_demo/fourway_PANEL_{id_acc_C,err_median_D}_proposed.png`
 are layout demos with the same flaw, left as they were.
+
+**Addendum 2026-10-09, evening (12_loss).** Kaelin asked why focal on the class head helps when the head is at H/4.
+Measured the candidate mechanism (`12_loss/cls_form_gradient_share.{json,md}`, `tools/cls_form_gradient_share.py`):
+at fixed weights on 128 stratified SynthVal frames, the class head's share of the shared-trunk gradient is 50% in the
+all-BCE 882k arm and 33-36% in the focal-class arms (attention blocks: 1.29 : 1 -> 0.70-0.74 : 1); a focal-trained
+class head scored with BCE carries a class loss 14-20x the heatmap loss (easy background cells left un-crushed).
+Consistent with "cls=focal is a localisation lever" acting through the trunk's gradient budget; a snapshot, not a
+proof, and the identity cost of focal remains unexplained.

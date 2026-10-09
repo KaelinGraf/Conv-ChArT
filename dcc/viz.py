@@ -101,3 +101,36 @@ def overlay_alpha(image_gray: np.ndarray, heat: np.ndarray, cmap: str = "magma",
     rgb = matplotlib.colormaps[cmap](heat_n)[..., :3]
     base_rgb = np.stack([img] * 3, axis=-1)
     return (1 - alpha) * base_rgb + alpha * rgb
+
+
+def save_panels(fig, out, dpi: int = 150, pad: float = 0.1) -> list:
+    """Save every data-bearing axes of a matplotlib figure as its own image beside `out`:
+    `<stem>_p<i>_<title slug><suffix>`. Each file is the rendered figure cropped to that
+    panel's tight bbox (title, ticks, labels, its legend); every other axes and all
+    figure-level text (suptitle, supylabel) are hidden for the crop, so nothing leaks in
+    from a neighbour. Call AFTER the composite savefig, having first given each panel any
+    legend/label it shared with its neighbours. Returns the written paths."""
+    import re
+    from pathlib import Path
+    out = Path(out)
+    fig.canvas.draw()
+    r = fig.canvas.get_renderer()
+    panels = [a for a in fig.axes if a.get_visible() and a.has_data()]
+    artists = [(o, o.get_visible()) for o in [*fig.axes, *fig.texts]]
+    # bboxes first, while everything is still visible: a hidden axes has no tight bbox. Axes.get_tightbbox
+    # collapses each axis label to 1 px along the axis (layout-only), so a y-label longer than the panel
+    # is tall would be clipped: union the labels' real extents back in.
+    def _bbox(a):
+        bb = a.get_tightbbox(r)
+        return bb.union([bb, a.xaxis.label.get_window_extent(r), a.yaxis.label.get_window_extent(r)])
+    bbs = [_bbox(a).transformed(fig.dpi_scale_trans.inverted()).padded(pad) for a in panels]
+    paths = []
+    for i, (ax, bb) in enumerate(zip(panels, bbs), 1):
+        slug = re.sub(r"[^a-z0-9]+", "_", ax.get_title().lower()).strip("_")[:40].rstrip("_")
+        for o, _ in artists:
+            o.set_visible(o is ax)
+        paths.append(out.with_name("_".join(filter(None, [out.stem, f"p{i}", slug])) + out.suffix))
+        fig.savefig(paths[-1], dpi=dpi, bbox_inches=bb)
+    for o, v in artists:
+        o.set_visible(v)
+    return paths

@@ -392,9 +392,25 @@ def _composite_board(bg_crop, rng, cfg, w2, h2, s_arg, size_mult, components):
     component dict actually used (post override)."""
     render_res = cfg["synth"]["render_res"]
     bcfg = cfg.get("board")
+    pool = (bcfg or {}).get("pool")
+    if pool:
+        # MULTI-BOARD TRAINING (Kaelin 2026-10-08, "training the main model from scratch on a larger set of
+        # boards"): ONE draw per positive sample picks which board renders, uniform over the pool; each entry is
+        # a {dictionary, marker_id_offset} override on top of cfg["board"]. Drawn here, before the affine, and
+        # ONLY when a pool is configured, so single-board configs consume exactly the RNG stream they always did.
+        # The corner-index convention, class-head width and lattice are the board's GEOMETRY and unchanged; only
+        # the marker appearance varies, which is exactly what the identity read must learn to generalise over.
+        bcfg = {**bcfg, **pool[int(rng.integers(len(pool)))]}
+        # The class head's width is (nx-1)^2 and fixed at build time, so a pool may vary MARKERS only, never the
+        # square count -- measured 2026-10-08: a 4x4 entry generated 9-corner records against a 16-channel head
+        # with no error anywhere. Fail here instead.
+        assert bcfg.get("squares", cfg["board"].get("squares")) == cfg["board"].get("squares"), \
+            f"board.pool entries must keep board.squares {cfg['board'].get('squares')}; got {bcfg.get('squares')}"
     board_img, p_render = render_board(render_res, bcfg)
     nx = get_board(bcfg)[1]
     M, comps = _sample_affine(cfg, rng, w2, h2, s_arg, size_mult, components, nx)
+    if pool:
+        comps["board"] = {"dictionary": bcfg["dictionary"], "marker_id_offset": int(bcfg.get("marker_id_offset", 0) or 0)}
     tau, psi, fov_scale = _sample_perspective(cfg, rng, components)
     comps.update(tilt=tau, psi=psi, fov_scale=fov_scale)
     M3 = np.eye(3)
@@ -1020,6 +1036,8 @@ def generate_sample(cfg, rng, bg_files, s=None, size_mult=1, force_negative=None
     image = cv2.cvtColor(np.clip(work, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
 
     record = {"image": image, "board_present": not negative, "s_px": float(s_px), "corners": corners_out}
+    if comps is not None and "board" in comps:
+        record["board"] = comps["board"]
     meta = {"M": M, "components": comps, "holes": holes, "cutouts": cutouts_meta, "bg_file": bg_files[idx]}
     return record, meta
 

@@ -1,0 +1,143 @@
+{
+  "pose_set": "eval_pose_rev6_b1",
+  "n_images": 1000,
+  "ckpts": {
+    "rel222": "runs/rel_w25_lam2_100k_rev6/ckpt_0100000.pt",
+    "rel502": "runs/rel_w375_lam15_100k_rev6/ckpt_0100000.pt",
+    "rel882": "runs/rel_w882_c2_100k_rev6/ckpt_0100000.pt"
+  },
+  "refiner_ckpt": "runs/ref_s15_10k_rev6/ckpt_0010000.pt",
+  "dc_ckpt": "runs/charuconet_rev6_ft/ckpt_latest.pt",
+  "pnp": "ALL arms use dcc.pipeline.pnp -- isolates the corners, not the PnP implementation; classical numbers therefore differ from eval_classical.py's native output",
+  "units": "rotation deg (geodesic); translation in BOARD SQUARES (square_length_m = 1.0)",
+  "arms": {
+    "rel222_coarse": {
+      "n": 1000,
+      "n_solved": 900,
+      "n_refused": 100,
+      "solve_rate": 0.9,
+      "rot_deg": {
+        "median": 0.3762299657883126,
+        "mean": 1.0215763347886249,
+        "p95": 2.435665413847305
+      },
+      "trans_squares": {
+        "median": 0.028751244874164708,
+        "mean": 0.10063809101439063,
+        "p95": 0.2786645642812246
+      }
+    },
+    "rel222_refined": {
+      "n": 1000,
+      "n_solved": 900,
+      "n_refused": 100,
+      "solve_rate": 0.9,
+      "rot_deg": {
+        "median": 0.12688294990085897,
+        "mean": 0.6855445907320563,
+        "p95": 1.2261334362727585
+      },
+      "trans_squares": {
+        "median": 0.00985351411862917,
+        "mean": 0.0690778420819439,
+        "p95": 0.15229982812360035
+      }
+    },
+    "rel502_coarse": {
+      "n": 1000,
+      "n_solved": 923,
+      "n_refused": 77,
+      "solve_rate": 0.923,
+      "rot_deg": {
+        "median": 0.381657043350346,
+        "mean": 0.9507400724928503,
+        "p95": 2.1863339159160535
+      },
+      "trans_squares": {
+        "median": 0.02680575631270652,
+        "mean": 0.08661821837968836,
+        "p95": 0.2577098094422214
+      }
+    },
+    "rel502_refined": {
+      "n": 1000,
+      "n_solved": 923,
+      "n_refused": 77,
+      "solve_rate": 0.923,
+      "rot_deg": {
+        "median": 0.1295008547251246,
+        "mean": 0.5758930380237887,
+        "p95": 1.2297066051267707
+      },
+      "trans_squares": {
+        "median": 0.010338420621466548,
+        "mean": 0.0603964541630063,
+        "p95": 0.15091704024910305
+      }
+    },
+    "rel882_coarse": {
+      "n": 1000,
+      "n_solved": 936,
+      "n_refused": 64,
+      "solve_rate": 0.936,
+      "rot_deg": {
+        "median": 0.3744106077752531,
+        "mean": 1.1176209515770683,
+        "p95": 2.342354095020548
+      },
+      "trans_squares": {
+        "median": 0.028898232020233547,
+        "mean": 0.07392828501267497,
+        "p95": 0.2697592598339765
+      }
+    },
+    "rel882_refined": {
+      "n": 1000,
+      "n_solved": 936,
+      "n_refused": 64,
+      "solve_rate": 0.936,
+      "rot_deg": {
+        "median": 0.13177358384409732,
+        "mean": 0.536796711257255,
+        "p95": 1.1737416230137947
+      },
+      "trans_squares": {
+        "median": 0.010389524324841103,
+        "mean": 0.0376116077858991,
+        "p95": 0.12815332280931907
+      }
+    },
+    "deep_charuco": {
+      "n": 1000,
+      "n_solved": 933,
+      "n_refused": 67,
+      "solve_rate": 0.933,
+      "rot_deg": {
+        "median": 0.9131411212213754,
+        "mean": 10.623376975175832,
+        "p95": 89.36030666605572
+      },
+      "trans_squares": {
+        "median": 0.0770422773338113,
+        "mean": 1.2635718457350944,
+        "p95": 7.269530745009977
+      }
+    },
+    "classical": {
+      "n": 1000,
+      "n_solved": 544,
+      "n_refused": 456,
+      "solve_rate": 0.544,
+      "rot_deg": {
+        "median": 0.1601803821868351,
+        "mean": 0.8690103355656952,
+        "p95": 2.348684961395977
+      },
+      "trans_squares": {
+        "median": 0.02004165919442591,
+        "mean": 0.06539797593415407,
+        "p95": 0.22358745804683142
+      }
+    }
+  }
+}

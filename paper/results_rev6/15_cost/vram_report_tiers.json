@@ -1,0 +1,38 @@
+{
+  "note": "activations = max_memory_allocated minus weights, fp16 autocast, channels_last, no_grad. reserved = caching-allocator high-water mark, which is what nvidia-smi reflects. onnx_estimate is a MODEL not a measurement: weights_fp16 + [0.35, 1.0] x eager activation peak, the range spanning full buffer reuse to none.",
+  "rows": {
+    "abl_composite_s05@B1": {
+      "params": 3517362,
+      "weights_fp32_mb": 14.0283203125,
+      "weights_fp16_mb": 6.708835601806641,
+      "activations_mb": 254.4296875,
+      "torch_reserved_mb": 454.0,
+      "onnx_estimate_mb": [
+        95.75922622680663,
+        261.13852310180664
+      ]
+    },
+    "abl_nodilate_width_half_s05@B1": {
+      "params": 882402,
+      "weights_fp32_mb": 3.68505859375,
+      "weights_fp16_mb": 1.6830482482910156,
+      "activations_mb": 122.43798828125,
+      "torch_reserved_mb": 210.0,
+      "onnx_estimate_mb": [
+        44.53634414672851,
+        124.12103652954102
+      ]
+    },
+    "abl_nodilate_width_quarter_s05@B1": {
+      "params": 222138,
+      "weights_fp32_mb": 1.02685546875,
+      "weights_fp16_mb": 0.4236946105957031,
+      "activations_mb": 61.51904296875,
+      "torch_reserved_mb": 112.0,
+      "onnx_estimate_mb": [
+        21.955359649658202,
+        61.9427375793457
+      ]
+    }
+  }
+}

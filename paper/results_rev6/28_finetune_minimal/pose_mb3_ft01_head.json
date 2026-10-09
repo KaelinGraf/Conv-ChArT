@@ -1,0 +1,36 @@
+{
+  "pose_set": "eval_pose_rev6_b1_dict6x6",
+  "arm": "with-refiner",
+  "ckpt": "runs/mb3_ft01_head/ckpt_0005000.pt",
+  "ckpt_step": 5000,
+  "refiner_ckpt": "runs/ref_s15_10k_rev6/ckpt_0010000.pt",
+  "refiner_step": 10000,
+  "n_images": 1000,
+  "n_solved": 1,
+  "n_refused": 999,
+  "refusal_reasons": {
+    "too_few": 999
+  },
+  "n_ambiguous": 0,
+  "solve_rate": 0.001,
+  "m05_rot_deg": {
+    "median": 0.1680124258293019,
+    "mean": 0.1680124258293019,
+    "p95": 0.1680124258293019
+  },
+  "m06_trans_squares": {
+    "median": 0.05394643551052828,
+    "mean": 0.05394643551052828,
+    "p95": 0.05394643551052828
+  },
+  "nees": {
+    "expected_chi2_dof": 6,
+    "n_unambiguous": 1,
+    "n_ambiguous": 0,
+    "mean_unambiguous": 6.542522292629496,
+    "median_unambiguous": 6.542522292629496,
+    "mean_ambiguous": null,
+    "frac_within_chi2_95": 1.0
+  },
+  "error_cov": null
+}

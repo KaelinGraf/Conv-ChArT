@@ -1,0 +1,26 @@
+{
+  "pose_set": "eval_pose_rev5",
+  "arm": "coarse-only",
+  "ckpt": "runs/rev640_baseline/ckpt_0150000.pt",
+  "ckpt_step": 150000,
+  "refiner_ckpt": null,
+  "refiner_step": null,
+  "n_images": 200,
+  "n_solved": 193,
+  "n_refused": 7,
+  "refusal_reasons": {
+    "too_few": 7
+  },
+  "n_ambiguous": 13,
+  "solve_rate": 0.965,
+  "m05_rot_deg": {
+    "median": 0.3246402260318741,
+    "mean": 0.6122027873631122,
+    "p95": 1.6406364225255325
+  },
+  "m06_trans_squares": {
+    "median": 0.02292426532738528,
+    "mean": 0.05943237753117197,
+    "p95": 0.2500220972409978
+  }
+}

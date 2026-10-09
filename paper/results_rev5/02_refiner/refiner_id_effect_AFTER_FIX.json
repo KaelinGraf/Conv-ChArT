@@ -1,0 +1,24 @@
+{
+  "counts": {
+    "both_ok": 3426,
+    "both_bad": 33,
+    "only_coarse_id": 55,
+    "only_ref_id": 6,
+    "lost_match": 19,
+    "lost_readout": 36,
+    "gained": 6,
+    "n_gt": 3520
+  },
+  "p_id_coarse_mean": 0.6813281842265096,
+  "p_id_refined_mean": 0.7175938036166547,
+  "frac_pid_lower_when_refined": 0.0,
+  "provenance": {
+    "ckpt": "runs/rev640_baseline/ckpt_0150000.pt",
+    "ckpt_step": 150000,
+    "refiner_ckpt": "runs/refiner_rev5/ckpt_0010000.pt",
+    "refiner_step": 10000,
+    "config": "configs/rev640.yaml",
+    "n_frames": 250,
+    "match_px": 4.0
+  }
+}

@@ -1,0 +1,8 @@
+
+[detector] ckpt=runs/mb3_base_30k/ckpt_0030000.pt step=30000 config=configs/abl_c2_wh_clsfocal_lam2.yaml n=10000 synth_hash=8e1ec582c99d
+  val_loss=1.680782703447342
+  M-01: mean=0.413px median=0.409px p95=0.700px tail_frac_gt4px=0.0001 n_matched=122469
+  M-02 by octave: {'12-16': 0.8988852606688436, '16-32': 0.9290435689071052, '32-64': 0.9448972854930042, '64-128': 0.9477564910511722}
+  M-04: accuracy=0.8060 by_octave={'12-16': 0.31385444068645874, '16-32': 0.7769419085020656, '32-64': 0.9495848001934911, '64-128': 0.9273887891482147}
+
+wrote paper/results_rev6/29_multiboard_base/mb3/fullval_dict5x5_10k.json

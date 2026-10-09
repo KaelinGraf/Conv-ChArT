@@ -1,0 +1,16 @@
+[ZERO-SHOT TRANSFER] checkpoint board {'squares': [5, 5], 'dictionary': 'DICT_5X5_50', 'marker_ids': [0, 11], 'marker_ratio': 0.7, 'square_length_m': None, 'pool': [{'dictionary': 'DICT_5X5_1000', 'marker_id_offset': 0}, {'dictionary': 'DICT_4X4_1000', 'marker_id_offset': 0}, {'dictionary': 'DICT_APRILTAG_36h11', 'marker_id_offset': 0}]} != pose-set board {'squares': [5, 5], 'dictionary': 'DICT_5X5_50', 'marker_ids': [0, 11], 'marker_ratio': 0.7, 'square_length_m': None}: the class head would be scored against a board it was never trained on -- proceeding, --allow-board-mismatch given
+  400/1000 solved=253 refused=147
+  800/1000 solved=511 refused=289
+/home/kaelin/p4p/dense deep charuco/dcc/pipeline.py:291: RuntimeWarning: divide by zero encountered in divide
+  proj = proj[:, :2] / proj[:, 2:3]
+/home/kaelin/p4p/dense deep charuco/dcc/pipeline.py:291: RuntimeWarning: invalid value encountered in divide
+  proj = proj[:, :2] / proj[:, 2:3]
+
+[with-refiner] 636/1000 solved (63.6%), 364 refused {'too_few': 354, 'pnp_solver_failed': 2, 'vacuous_uncorroborated': 4, 'collinear': 4}, 4 flagged ambiguous
+  NEES (unambiguous, n=402): mean 12.752 median 2.487 vs chi2_6 expectation 6.000 -> OVER-confident by 2.13x
+  frac within chi2_6 95% bound (12.592): 84.8% (ideal 95%)
+  NEES (AMBIGUOUS poses, n=3): mean 7762976.458 -- single-Gaussian cov cannot describe a bimodal posterior; expect this to be large
+  error std (unambiguous, n=632) rot xyz deg [0.772, 0.3584, 3.4911] trans xyz sq [0.18928, 0.04778, 0.04219]  | robust (MAD) rot deg [0.0738, 0.0755, 0.0251] trans sq [0.00211, 0.00182, 0.00726]
+  M-05 rotation    median 0.0932 deg  mean 0.5600  p95 0.7495
+  M-06 translation median 0.0062 sq   mean 0.0369  p95 0.0519
+-> paper/results_rev6/29_multiboard_base/mb3/pose_dict5x5_B1.json

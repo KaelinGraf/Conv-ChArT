@@ -1,0 +1,8 @@
+
+[detector] ckpt=runs/mb3_base_30k/ckpt_0030000.pt step=30000 config=configs/mb3_eval_4X4_1000_0.yaml n=2000 synth_hash=8e1ec582c99d
+  val_loss=1.7000311102867127
+  M-01: mean=0.416px median=0.411px p95=0.708px tail_frac_gt4px=0.0001 n_matched=24344
+  M-02 by octave: {'12-16': 0.8943089430894309, '16-32': 0.928883638511518, '32-64': 0.9469638739431206, '64-128': 0.9364188873305282}
+  M-04: accuracy=0.8490 by_octave={'12-16': 0.49253246753246754, '16-32': 0.8346687015134173, '32-64': 0.9587391774891775, '64-128': 0.9152937260775503}
+
+wrote paper/results_rev6/29_multiboard_base/mb3/perboard_4X4_1000_0.json

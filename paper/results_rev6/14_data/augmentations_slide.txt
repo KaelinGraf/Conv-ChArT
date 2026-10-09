@@ -1,0 +1,36 @@
+SYNTHETIC DATA -- ONE SLIDE
+Six bullets condensed from the full 24-item list in augmentations.txt.
+Every frame is generated on the fly; there is no fixed training set.
+
+
+    Real photographic backgrounds
+        COCO images, with the board histogram-matched and relit to the local
+        background luminance so it belongs in the scene rather than being pasted
+        on top of it.
+
+    Full board placement
+        Scale 16 to 128 px between corners, any in-plane rotation, out-of-plane
+        tilt to 60 deg, partial views off the frame edge.
+
+    Occlusion by real objects
+        Segmented object cutouts (SAM2) and rectangular occluders. A hidden
+        corner is relabelled not-visible, so the network is taught to abstain
+        rather than to hallucinate.
+
+    Optical degradation
+        Motion blur, defocus, glare and specular highlights, water droplets on
+        the lens, vignetting.
+
+    Sensor model
+        Photon shot noise and read noise (Poissonian-Gaussian), fixed-pattern
+        noise and PRNU, brightness down to near-black.
+
+    The deployment domain
+        Lit-minus-unlit differencing pairs: two exposures with a daylight
+        pedestal and an LED illumination lobe, subtracted. This is what the
+        robot actually sees.
+
+
+SEVERITIES ARE CENTRED ON THE REAL CAMERA -- an OV2311-class industrial sensor:
+global shutter, monochrome, 940 nm bandpass, no artistic ISP. The benchmark is
+meant to be hard where the deployment is hard, not hard everywhere.

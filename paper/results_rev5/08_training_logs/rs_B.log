@@ -1,0 +1,27 @@
+[sensor_noise_K] sensor gain K (e-/DN, lower = noisier)
+   sensor_noise_K =      30: recall  95.1%  id  92.8%  err_med refined 0.1739 / coarse 0.4495 px  (n_gt=1379)
+   sensor_noise_K =      16: recall  95.8%  id  96.6%  err_med refined 0.1473 / coarse 0.4355 px  (n_gt=1407)
+   sensor_noise_K =       8: recall  95.0%  id  94.3%  err_med refined 0.1487 / coarse 0.4309 px  (n_gt=1407)
+   sensor_noise_K =       4: recall  94.9%  id  95.6%  err_med refined 0.2158 / coarse 0.4415 px  (n_gt=1376)
+   sensor_noise_K =       2: recall  94.2%  id  95.9%  err_med refined 0.1735 / coarse 0.4354 px  (n_gt=1411)
+   sensor_noise_K =       1: recall  90.5%  id  92.5%  err_med refined 0.2097 / coarse 0.4544 px  (n_gt=1423)
+  -> paper/results_rev4/robustness/sensor_noise_K.json
+[brightness] brightness offset
+       brightness =    -0.9: recall  91.7%  id  96.4%  err_med refined 0.2321 / coarse 0.4621 px  (n_gt=1379)
+       brightness =    -0.7: recall  95.1%  id  96.1%  err_med refined 0.1334 / coarse 0.4235 px  (n_gt=1407)
+       brightness =    -0.5: recall  97.1%  id  96.8%  err_med refined 0.1444 / coarse 0.4256 px  (n_gt=1407)
+       brightness =   -0.25: recall  97.2%  id  96.8%  err_med refined 0.1647 / coarse 0.4279 px  (n_gt=1376)
+       brightness =     0.0: recall  97.1%  id  97.5%  err_med refined 0.1591 / coarse 0.4208 px  (n_gt=1411)
+       brightness =    0.35: recall  86.4%  id  87.9%  err_med refined 0.3100 / coarse 0.4710 px  (n_gt=1423)
+  -> paper/results_rev4/robustness/brightness.json
+[contrast] contrast scale
+         contrast =     0.6: recall  93.9%  id  94.5%  err_med refined 0.1826 / coarse 0.4490 px  (n_gt=1379)
+         contrast =     0.8: recall  95.8%  id  94.2%  err_med refined 0.1535 / coarse 0.4368 px  (n_gt=1407)
+         contrast =     1.0: recall  95.1%  id  94.5%  err_med refined 0.1366 / coarse 0.4304 px  (n_gt=1407)
+/home/kaelin/p4p/dense deep charuco/dcc/pipeline.py:198: RuntimeWarning: divide by zero encountered in divide
+  proj = proj[:, :2] / proj[:, 2:3]
+/home/kaelin/p4p/dense deep charuco/dcc/pipeline.py:198: RuntimeWarning: invalid value encountered in divide
+  proj = proj[:, :2] / proj[:, 2:3]
+         contrast =     1.2: recall  94.8%  id  96.6%  err_med refined 0.1881 / coarse 0.4355 px  (n_gt=1376)
+         contrast =     1.4: recall  96.5%  id  97.1%  err_med refined 0.1531 / coarse 0.4252 px  (n_gt=1411)
+  -> paper/results_rev4/robustness/contrast.json

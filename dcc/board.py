@@ -39,10 +39,16 @@ def n_corners(bcfg=None):
 
 
 @functools.lru_cache(maxsize=None)
-def _build_board(nx, dictionary, marker_ratio):
+def _build_board(nx, dictionary, marker_ratio, marker_id_offset=0):
     assert hasattr(cv2.aruco, dictionary), f"unknown cv2.aruco dictionary {dictionary!r}"
     d = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary))
-    return cv2.aruco.CharucoBoard((nx, nx), 1.0, marker_ratio, d)
+    if marker_id_offset == 0:
+        return cv2.aruco.CharucoBoard((nx, nx), 1.0, marker_ratio, d)
+    n_markers = (nx * nx) // 2
+    assert marker_id_offset + n_markers <= d.bytesList.shape[0], \
+        f"{dictionary} has {d.bytesList.shape[0]} markers; offset {marker_id_offset} + {n_markers} exceeds it"
+    ids = np.arange(marker_id_offset, marker_id_offset + n_markers, dtype=np.int32)
+    return cv2.aruco.CharucoBoard((nx, nx), 1.0, marker_ratio, d, ids)
 
 
 def get_board(bcfg=None):
@@ -53,7 +59,7 @@ def get_board(bcfg=None):
     nx = _nx(bcfg)
     dictionary = bcfg.get("dictionary", _DEFAULT_BCFG["dictionary"])
     marker_ratio = bcfg.get("marker_ratio", _DEFAULT_BCFG["marker_ratio"])
-    return _build_board(nx, dictionary, marker_ratio), nx
+    return _build_board(nx, dictionary, marker_ratio, int(bcfg.get("marker_id_offset", 0) or 0)), nx
 
 
 BOARD = get_board()[0]

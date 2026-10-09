@@ -1,0 +1,8 @@
+
+[with-refiner] 9/1000 solved (0.9%), 991 refused {'too_few': 990, 'pnp_solver_failed': 1}, 1 flagged ambiguous
+  NEES (unambiguous, n=7): mean 1281910.881 median 5.411 vs chi2_6 expectation 6.000 -> OVER-confident by 213651.81x
+  frac within chi2_6 95% bound (12.592): 57.1% (ideal 95%)
+  error std (unambiguous, n=8) rot xyz deg [34.4887, 10.6824, 52.3482] trans xyz sq [1.35813, 2.03847, 0.46331]  | robust (MAD) rot deg [0.2116, 0.2926, 0.0694] trans sq [0.00846, 0.00861, 0.04456]
+  M-05 rotation    median 0.3325 deg  mean 20.4861  p95 108.9907
+  M-06 translation median 0.0354 sq   mean 0.8675  p95 4.4529
+-> paper/results_rev6/28_finetune_minimal/pose_ft07_head_reinit.json

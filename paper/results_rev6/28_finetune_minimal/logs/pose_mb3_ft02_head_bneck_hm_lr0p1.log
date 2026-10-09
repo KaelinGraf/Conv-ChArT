@@ -1,0 +1,15 @@
+/home/kaelin/p4p/dense deep charuco/dcc/pipeline.py:291: RuntimeWarning: divide by zero encountered in divide
+  proj = proj[:, :2] / proj[:, 2:3]
+/home/kaelin/p4p/dense deep charuco/dcc/pipeline.py:291: RuntimeWarning: invalid value encountered in divide
+  proj = proj[:, :2] / proj[:, 2:3]
+  400/1000 solved=135 refused=265
+  800/1000 solved=275 refused=525
+
+[with-refiner] 349/1000 solved (34.9%), 651 refused {'too_few': 618, 'pnp_solver_failed': 16, 'vacuous_uncorroborated': 10, 'collinear': 7}, 3 flagged ambiguous
+  NEES (unambiguous, n=231): mean 685869.566 median 2.529 vs chi2_6 expectation 6.000 -> OVER-confident by 114311.59x
+  frac within chi2_6 95% bound (12.592): 85.7% (ideal 95%)
+  NEES (AMBIGUOUS poses, n=3): mean 7846516.122 -- single-Gaussian cov cannot describe a bimodal posterior; expect this to be large
+  error std (unambiguous, n=346) rot xyz deg [3.8015, 6.9399, 7.6049] trans xyz sq [0.72722, 0.5413, 2.0759]  | robust (MAD) rot deg [0.062, 0.0677, 0.0194] trans sq [0.00155, 0.00143, 0.00654]
+  M-05 rotation    median 0.0874 deg  mean 1.5234  p95 0.5454
+  M-06 translation median 0.0051 sq   mean 0.3156  p95 0.0358
+-> paper/results_rev6/28_finetune_minimal/pose_mb3_ft02_head_bneck_hm_lr0p1.json

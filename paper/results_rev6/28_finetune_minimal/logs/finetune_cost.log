@@ -1,0 +1,33 @@
+arm                                  B  trainable   peak MB  reserved  ms/step
+ft01_head                            4     37,968       527       902      6.2
+ft01_head                            8     37,968      1044      1762     11.3
+ft01_head                           16     37,968      2068      3426     22.4
+ft02_head_bneck_hm_lr0p1             4    437,105       906      1046     12.9
+ft02_head_bneck_hm_lr0p1             8    437,105      1787      2054     24.6
+ft02_head_bneck_hm_lr0p1            16    437,105      3543      4070     47.9
+ft03_head_bneck_lr0p01_hm_lr0p1      4    437,105       906      1046     12.8
+ft03_head_bneck_lr0p01_hm_lr0p1      8    437,105      1787      2054     24.4
+ft03_head_bneck_lr0p01_hm_lr0p1     16    437,105      3543      4070     47.7
+ft04_full_llrd0p3                    4    882,402      1235      1590     17.7
+ft04_full_llrd0p3                    8    882,402      2442      3122     33.8
+ft04_full_llrd0p3                   16    882,402      4851      5276     66.8
+ft05_head_gate3                      4     44,177       694       862      8.4
+ft05_head_gate3                      8     44,177      1365      1762     16.2
+ft05_head_gate3                     16     44,177      2702      3446     32.8
+ft06_head_d3_lr0p1                   4    148,688       688      1090      8.3
+ft06_head_d3_lr0p1                   8    148,688      1354      1764     16.1
+ft06_head_d3_lr0p1                  16    148,688      2679      3448     32.2
+ft07_head_reinit                     4     37,968       537       862      6.2
+ft07_head_reinit                     8     37,968      1052      1762     11.3
+ft07_head_reinit                    16     37,968      2075      3446     22.4
+ft08_bitfit                          4     42,194      1159      1526     14.0
+ft08_bitfit                          8     42,194      2298      2536     27.1
+ft08_bitfit                         16     42,194      4571      4976     55.0
+ft09_full_lr0p1                      4    882,402      1235      1590     17.2
+ft09_full_lr0p1                      8    882,402      2442      3122     33.3
+ft09_full_lr0p1                     16    882,402      4851      5276     66.0
+ft10_full_lr1                        4    882,402      1235      1590     17.1
+ft10_full_lr1                        8    882,402      2442      3122     33.3
+ft10_full_lr1                       16    882,402      4851      5276     65.9
+-> paper/results_rev6/28_finetune_minimal/finetune_cost.json
+exit 0

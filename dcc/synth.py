@@ -342,9 +342,16 @@ def _composite_board(bg_crop, rng, cfg, w2, h2, s_arg, size_mult, components):
     """
     render_res = cfg["synth"]["render_res"]
     bcfg = cfg.get("board")
+    pool = (bcfg or {}).get("pool")
+    if pool:
+        bcfg = {**bcfg, **pool[int(rng.integers(len(pool)))]}
+        assert bcfg.get("squares", cfg["board"].get("squares")) == cfg["board"].get("squares"), \
+            f"board.pool entries must keep board.squares {cfg['board'].get('squares')}; got {bcfg.get('squares')}"
     board_img, p_render = render_board(render_res, bcfg)
     nx = get_board(bcfg)[1]
     M, comps = _sample_affine(cfg, rng, w2, h2, s_arg, size_mult, components, nx)
+    if pool:
+        comps["board"] = {"dictionary": bcfg["dictionary"], "marker_id_offset": int(bcfg.get("marker_id_offset", 0) or 0)}
     tau, psi, fov_scale = _sample_perspective(cfg, rng, components)
     comps.update(tilt=tau, psi=psi, fov_scale=fov_scale)
     M3 = np.eye(3)
@@ -757,6 +764,8 @@ def generate_sample(cfg, rng, bg_files, s=None, size_mult=1, force_negative=None
     image = cv2.cvtColor(np.clip(work, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
 
     record = {"image": image, "board_present": not negative, "s_px": float(s_px), "corners": corners_out}
+    if comps is not None and "board" in comps:
+        record["board"] = comps["board"]
     meta = {"M": M, "components": comps, "holes": holes, "cutouts": cutouts_meta, "bg_file": bg_files[idx]}
     return record, meta
 

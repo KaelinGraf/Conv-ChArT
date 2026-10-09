@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conv-ChArT — focal target explorer (sigma / beta)</title>
+<style>
+  :root{
+    --bg:#faf9f7; --fg:#1c1b19; --muted:#6b675f; --line:#d8d4cc; --panel:#fff;
+    --gauss:#8a8578; --forgive:#2e7d5b; --penal:#c2452d; --accent:#2f5d8a;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14151a; --fg:#e8e6e1; --muted:#9a968d; --line:#2e3038; --panel:#1b1d24;
+           --gauss:#7d7a70; --forgive:#4bbd8b; --penal:#e2705a; --accent:#6fa3d8; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:clamp(16px,3vw,32px);background:var(--bg);color:var(--fg);
+       font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+  h1{font-size:1.35rem;margin:0 0 .2em;font-weight:650}
+  .sub{color:var(--muted);margin:0 0 1.4em;max-width:62ch}
+  code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.92em;
+       background:color-mix(in srgb,var(--fg) 8%,transparent);padding:.1em .35em;border-radius:3px}
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;align-items:start}
+  @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  canvas{width:100%;height:auto;display:block}
+  .ctl{margin-bottom:18px}
+  .ctl label{display:flex;justify-content:space-between;align-items:baseline;
+             font-weight:600;margin-bottom:6px}
+  .ctl .val{font-family:ui-monospace,monospace;font-weight:500;color:var(--accent)}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .hint{font-size:.82rem;color:var(--muted);margin-top:4px}
+  .presets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px}
+  button{font:inherit;font-size:.82rem;padding:.35em .7em;border:1px solid var(--line);
+         background:transparent;color:var(--fg);border-radius:999px;cursor:pointer}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  table{width:100%;border-collapse:collapse;font-size:.86rem;margin-top:4px}
+  td{padding:.3em 0;border-bottom:1px solid var(--line)}
+  td:last-child{text-align:right;font-family:ui-monospace,monospace}
+  .key{display:flex;gap:14px;flex-wrap:wrap;font-size:.82rem;color:var(--muted);margin-top:10px}
+  .key i{display:inline-block;width:22px;height:3px;vertical-align:middle;margin-right:5px;border-radius:2px}
+  .note{font-size:.85rem;color:var(--muted);margin-top:14px;max-width:70ch}
+  .big{font-size:1.5rem;font-family:ui-monospace,monospace;color:var(--accent);font-weight:600}
+</style>
+</head>
+<body>
+
+<h1>Focal target explorer</h1>
+<p class="sub">
+  CornerNet penalty-reduced focal, as used by <code>dcc/losses.py</code>.
+  <b>&sigma;</b> sets which pixels get a high target value; <b>&beta;</b> sets how much a given
+  target value is worth as forgiveness. Penalty weight on a negative pixel is
+  <code>(1 &minus; y)<sup>&beta;</sup></code> where <code>y = exp(&minus;d&sup2;/2&sigma;&sup2;)</code>.
+</p>
+
+<div class="wrap">
+  <div>
+    <div class="panel">
+      <canvas id="plot" width="1100" height="470"></canvas>
+      <div class="key">
+        <span><i style="background:var(--gauss)"></i>Gaussian target y(d)</span>
+        <span><i style="background:var(--forgive)"></i>forgiveness 1&minus;(1&minus;y)<sup>&beta;</sup></span>
+        <span><i style="background:var(--penal)"></i>penalty (1&minus;y)<sup>&beta;</sup></span>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:18px">
+      <canvas id="map" width="1100" height="230"></canvas>
+      <div class="hint">Penalty weight over a 13&times;13 pixel neighbourhood (left) and the
+        target heatmap the network is shown (right). Dark = forgiven, bright = fully penalised.</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <div class="presets" id="presets"></div>
+
+      <div class="ctl">
+        <label>&sigma; <span class="val" id="sv">2.00</span></label>
+        <input type="range" id="s" min="0.25" max="4" step="0.05" value="2">
+        <div class="hint">Width of the Gaussian, in pixels.</div>
+      </div>
+
+      <div class="ctl">
+        <label>&beta; <span class="val" id="bv">4.0</span></label>
+        <input type="range" id="b" min="0" max="8" step="0.1" value="4">
+        <div class="hint">&beta;=1 makes forgiveness exactly the bell curve.
+          &beta;&gt;1 bulges it outward, &beta;&lt;1 pulls it in, &beta;=0 removes it entirely.</div>
+      </div>
+
+      <div style="text-align:center;margin:18px 0 6px">
+        <div class="hint" style="margin:0">half-forgiveness radius</div>
+        <div class="big" id="hr">3.83 px</div>
+      </div>
+
+      <table>
+        <tr><td>penalty at d = 0.5 px</td><td id="p05"></td></tr>
+        <tr><td>penalty at d = 1 px</td><td id="p1"></td></tr>
+        <tr><td>penalty at d = 2 px</td><td id="p2"></td></tr>
+        <tr><td>target y at d = 1 px</td><td id="y1"></td></tr>
+        <tr><td>&beta;'s widening vs &beta;=1</td><td id="wid"></td></tr>
+      </table>
+
+      <p class="note" id="verdict"></p>
+    </div>
+  </div>
+</div>
+
+<script>
+const PRESETS = [
+  ["current (rev640)", 2, 4],
+  ["A-SIGMA1 (running)", 1, 4],
+  ["A-SIGMA05 (proposed)", 0.5, 4],
+  ["beta=1 (= the bell)", 2, 1],
+  ["A-BETA0 (no forgiveness)", 2, 0],
+];
+
+const $ = id => document.getElementById(id);
+const sS = $("s"), sB = $("b");
+
+const gauss = (d, s) => Math.exp(-(d*d)/(2*s*s));
+const penalty = (d, s, b) => Math.pow(1 - gauss(d, s), b);
+
+// distance at which penalty = 0.5. beta=0 never reaches it (penalty is 1 everywhere).
+function halfRadius(s, b){
+  if (b <= 0) return 0;
+  const g = 1 - Math.pow(0.5, 1/b);
+  if (g <= 0 || g >= 1) return NaN;
+  return s * Math.sqrt(-2 * Math.log(g));
+}
+
+function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+function drawPlot(s, b){
+  const c = $("plot"), x = c.getContext("2d");
+  const W = c.width, H = c.height, L = 62, R = 18, T = 18, B = 46;
+  const DMAX = 6;
+  x.clearRect(0,0,W,H);
+  const px = d => L + (d/DMAX)*(W-L-R);
+  const py = v => T + (1-v)*(H-T-B);
+
+  // pixel-centre gridlines: the only distances that actually exist on the sampling grid
+  x.strokeStyle = css("--line"); x.lineWidth = 1;
+  x.fillStyle = css("--muted"); x.font = "12px ui-monospace, monospace";
+  for (let d = 0; d <= DMAX; d++){
+    x.beginPath(); x.moveTo(px(d), T); x.lineTo(px(d), H-B); x.stroke();
+    x.textAlign = "center"; x.fillText(d, px(d), H-B+18);
+  }
+  for (let v = 0; v <= 1.0001; v += 0.25){
+    x.beginPath(); x.moveTo(L, py(v)); x.lineTo(W-R, py(v)); x.stroke();
+    x.textAlign = "right"; x.fillText(v.toFixed(2), L-8, py(v)+4);
+  }
+  x.textAlign = "center";
+  x.fillText("distance from the true corner (pixels)", (L+W-R)/2, H-10);
+
+  const curve = (fn, colour, width, dash) => {
+    x.beginPath(); x.setLineDash(dash||[]);
+    for (let i = 0; i <= 600; i++){
+      const d = DMAX*i/600, v = fn(d);
+      i ? x.lineTo(px(d), py(v)) : x.moveTo(px(d), py(v));
+    }
+    x.strokeStyle = colour; x.lineWidth = width; x.stroke(); x.setLineDash([]);
+  };
+
+  // forgiveness, filled -- the region where a near-miss costs almost nothing
+  x.beginPath(); x.moveTo(px(0), py(0));
+  for (let i = 0; i <= 600; i++){
+    const d = DMAX*i/600;
+    x.lineTo(px(d), py(1 - penalty(d, s, b)));
+  }
+  x.lineTo(px(DMAX), py(0)); x.closePath();
+  x.fillStyle = css("--forgive") + "26"; x.fill();
+
+  curve(d => gauss(d, s), css("--gauss"), 1.6, [5,4]);
+  curve(d => 1 - penalty(d, s, b), css("--forgive"), 2.6);
+  curve(d => penalty(d, s, b), css("--penal"), 2.6);
+
+  // half-forgiveness marker
+  const hr = halfRadius(s, b);
+  if (isFinite(hr) && hr > 0 && hr < DMAX){
+    x.strokeStyle = css("--accent"); x.lineWidth = 1.4; x.setLineDash([3,3]);
+    x.beginPath(); x.moveTo(px(hr), py(0)); x.lineTo(px(hr), py(0.5)); x.stroke();
+    x.setLineDash([]);
+    x.fillStyle = css("--accent"); x.textAlign = "left";
+    x.fillText("half-forgiveness " + hr.toFixed(2) + " px", px(hr)+6, py(0.5)-8);
+  }
+}
+
+function drawMap(s, b){
+  const c = $("map"), x = c.getContext("2d");
+  const W = c.width, H = c.height;
+  x.clearRect(0,0,W,H);
+  const N = 13, cell = Math.floor((H-40)/N), org = (N-1)/2;
+  const draw = (x0, fn, title) => {
+    for (let iy = 0; iy < N; iy++) for (let ix = 0; ix < N; ix++){
+      // true corner sits at a sub-pixel offset; use the pixel-centre distance
+      const d = Math.hypot(ix-org, iy-org);
+      const v = fn(d);
+      const g = Math.round(255*v);
+      x.fillStyle = `rgb(${g},${g},${g})`;
+      x.fillRect(x0 + ix*cell, 22 + iy*cell, cell-1, cell-1);
+    }
+    x.fillStyle = css("--muted"); x.font = "13px ui-sans-serif"; x.textAlign = "left";
+    x.fillText(title, x0, 14);
+  };
+  draw(60, d => penalty(d, s, b), "penalty weight  (1 − y)^β");
+  draw(60 + N*cell + 90, d => gauss(d, s), "target heatmap  y");
+}
+
+function render(){
+  const s = +sS.value, b = +sB.value;
+  $("sv").textContent = s.toFixed(2);
+  $("bv").textContent = b.toFixed(1);
+  drawPlot(s, b); drawMap(s, b);
+
+  const pct = v => (100*v).toFixed(v < 0.01 ? 3 : 1) + "%";
+  $("p05").textContent = pct(penalty(0.5, s, b));
+  $("p1").textContent  = pct(penalty(1, s, b));
+  $("p2").textContent  = pct(penalty(2, s, b));
+  $("y1").textContent  = gauss(1, s).toFixed(3);
+
+  const hr = halfRadius(s, b), hr1 = halfRadius(s, 1);
+  $("hr").textContent = (b <= 0) ? "none" : hr.toFixed(2) + " px";
+  $("wid").textContent = (b <= 0) ? "—"
+    : (hr/hr1 >= 1 ? "+" : "") + (100*(hr/hr1 - 1)).toFixed(0) + "%";
+
+  let msg;
+  if (b <= 0.001)
+    msg = "β = 0 removes forgiveness entirely: every pixel but the single forced peak takes " +
+          "full penalty, at any distance. This is not a narrow σ — it is a different mechanism.";
+  else if (penalty(1, s, b) < 0.01)
+    msg = "A pixel a full pixel off the corner keeps " + pct(penalty(1,s,b)) + " of its penalty. " +
+          "Essentially unpoliced — nothing stops the network spreading mass here, which is why " +
+          "peaks come out broad.";
+  else if (penalty(1, s, b) > 0.9)
+    msg = "A one-pixel miss is charged almost in full. Sharp, but the target now flips " +
+          "discontinuously as the corner crosses a rounding boundary — that is label noise.";
+  else
+    msg = "A one-pixel miss costs " + pct(penalty(1,s,b)) + " while a half-pixel miss costs only " +
+          pct(penalty(0.5,s,b)) + ". Sharp where it matters, soft on the rounding boundary.";
+  $("verdict").textContent = msg;
+
+  document.querySelectorAll("#presets button").forEach((el,i) => {
+    el.classList.toggle("on", Math.abs(PRESETS[i][1]-s) < 1e-6 && Math.abs(PRESETS[i][2]-b) < 1e-6);
+  });
+}
+
+PRESETS.forEach(([name, s, b]) => {
+  const el = document.createElement("button");
+  el.textContent = name;
+  el.onclick = () => { sS.value = s; sB.value = b; render(); };
+  $("presets").appendChild(el);
+});
+sS.oninput = sB.oninput = render;
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+render();
+</script>
+</body>
+</html>

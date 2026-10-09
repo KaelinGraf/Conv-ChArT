@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "/home/kaelin/p4p/dense deep charuco/tools/eval_pose_ours.py", line 222, in <module>
+    main()
+    ~~~~^^
+  File "/home/kaelin/p4p/dense deep charuco/tools/eval_pose_ours.py", line 103, in main
+    ck = torch.load(args.ckpt, map_location="cpu", weights_only=False)
+  File "/home/kaelin/anaconda3/envs/MLWS/lib/python3.13/site-packages/torch/serialization.py", line 1484, in load
+    with _open_file_like(f, "rb") as opened_file:
+         ~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/home/kaelin/anaconda3/envs/MLWS/lib/python3.13/site-packages/torch/serialization.py", line 759, in _open_file_like
+    return _open_file(name_or_buffer, mode)
+  File "/home/kaelin/anaconda3/envs/MLWS/lib/python3.13/site-packages/torch/serialization.py", line 740, in __init__
+    super().__init__(open(name, mode))
+                     ~~~~^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'runs/ft13_head_bneck_hm_lr0p1_20k/ckpt_0005000.pt'

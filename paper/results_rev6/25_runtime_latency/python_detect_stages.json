@@ -1,0 +1,9 @@
+{
+ "what": "per-stage wall time of the Python dcc.pipeline.detect() path, release checkpoints from deploy/, detector+refiner on CUDA fp32, post-processing on CPU (torch threads 4)",
+ "machine": {"cpu": "Intel Core Ultra 9 285K", "gpu": "NVIDIA GeForce RTX 5090", "torch": "2.8.0+cu129"},
+ "frames": "12 frames rendered by tools/gen_eval_pose.py --config configs/rev640.yaml (scratchpad, 640x480), median 16 peaks/frame, 12/12 poses accepted",
+ "unit": "ms, median over 12 frames [max in brackets]",
+ "222k": {"forward+sigmoid+D2H": [4.40, 5.86], "peaks+merge": [4.37, 4.77], "cut_crops": [0.06, 0.06], "refiner_fwd": [0.35, 1.82], "soft_argmax": [0.48, 0.52], "read_ids": [0.09, 0.22], "undistort+gate+recover+pnp": [0.27, 1.10], "detect_total": [10.32, 11.33]},
+ "882k": {"forward+sigmoid+D2H": [4.95, 5.91], "peaks+merge": [4.25, 4.84], "cut_crops": [0.06, 0.06], "refiner_fwd": [0.35, 1.67], "soft_argmax": [0.48, 0.53], "read_ids": [0.09, 0.24], "undistort+gate+recover+pnp": [0.25, 0.28], "detect_total": [10.71, 11.73]},
+ "note": "peaks+merge is a full-map torch max_pool2d + nonzero on CPU; a threshold-first scan removes most of it. All other post-processing stages are sub-millisecond."
+}

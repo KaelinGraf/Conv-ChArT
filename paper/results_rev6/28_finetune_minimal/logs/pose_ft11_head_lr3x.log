@@ -1,0 +1,10 @@
+/home/kaelin/p4p/dense deep charuco/dcc/pipeline.py:291: RuntimeWarning: invalid value encountered in divide
+  proj = proj[:, :2] / proj[:, 2:3]
+
+[with-refiner] 7/1000 solved (0.7%), 993 refused {'too_few': 990, 'vacuous_uncorroborated': 1, 'pnp_solver_failed': 2}, 0 flagged ambiguous
+  NEES (unambiguous, n=7): mean 1.396 median 0.977 vs chi2_6 expectation 6.000 -> conservative by 4.30x
+  frac within chi2_6 95% bound (12.592): 100.0% (ideal 95%)
+  error std (unambiguous, n=7) rot xyz deg [0.0602, 0.2396, 0.0764] trans xyz sq [0.00886, 0.00875, 0.04029]  | robust (MAD) rot deg [0.0649, 0.2074, 0.0375] trans sq [0.01123, 0.00294, 0.02907]
+  M-05 rotation    median 0.1450 deg  mean 0.2565  p95 0.5649
+  M-06 translation median 0.0241 sq   mean 0.0354  p95 0.0925
+-> paper/results_rev6/28_finetune_minimal/pose_ft11_head_lr3x.json

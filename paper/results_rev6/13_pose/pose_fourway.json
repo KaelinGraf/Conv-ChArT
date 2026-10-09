@@ -1,0 +1,75 @@
+{
+  "pose_set": "eval_pose_rev6",
+  "n_images": 1000,
+  "ckpt": "runs/rev640_160k_rev6/ckpt_0160000.pt",
+  "refiner_ckpt": "runs/refiner_rev6/ckpt_0013000.pt",
+  "dc_ckpt": "runs/charuconet_rev6_ft/ckpt_latest.pt",
+  "pnp": "ALL arms use dcc.pipeline.pnp -- isolates the corners, not the PnP implementation; classical numbers therefore differ from eval_classical.py's native output",
+  "units": "rotation deg (geodesic); translation in BOARD SQUARES (square_length_m = 1.0)",
+  "arms": {
+    "ours_coarse": {
+      "n": 1000,
+      "n_solved": 970,
+      "n_refused": 30,
+      "solve_rate": 0.97,
+      "rot_deg": {
+        "median": 0.39083930236092584,
+        "mean": 0.8006114183683678,
+        "p95": 2.2537426290763056
+      },
+      "trans_squares": {
+        "median": 0.028977860849892345,
+        "mean": 0.07415300395994388,
+        "p95": 0.31285223299513726
+      }
+    },
+    "ours_refined": {
+      "n": 1000,
+      "n_solved": 970,
+      "n_refused": 30,
+      "solve_rate": 0.97,
+      "rot_deg": {
+        "median": 0.11560910403857298,
+        "mean": 0.4774998987294283,
+        "p95": 1.224613601862009
+      },
+      "trans_squares": {
+        "median": 0.008907723841567503,
+        "mean": 0.047165371385867495,
+        "p95": 0.161235217799106
+      }
+    },
+    "deep_charuco": {
+      "n": 1000,
+      "n_solved": 961,
+      "n_refused": 39,
+      "solve_rate": 0.961,
+      "rot_deg": {
+        "median": 0.8070094226988,
+        "mean": 9.909833557497649,
+        "p95": 78.94940824865395
+      },
+      "trans_squares": {
+        "median": 0.07037307066726674,
+        "mean": 1.2382637602490363,
+        "p95": 8.492103102526992
+      }
+    },
+    "classical": {
+      "n": 1000,
+      "n_solved": 613,
+      "n_refused": 387,
+      "solve_rate": 0.613,
+      "rot_deg": {
+        "median": 0.13378519703497202,
+        "mean": 0.9510941469474341,
+        "p95": 2.095426907243324
+      },
+      "trans_squares": {
+        "median": 0.017844688984874985,
+        "mean": 0.06964074517464275,
+        "p95": 0.1931751718750932
+      }
+    }
+  }
+}

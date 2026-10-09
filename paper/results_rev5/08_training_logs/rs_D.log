@@ -1,0 +1,22 @@
+[diff_ambient] daylight pedestal (ambient)
+     diff_ambient =    0.05: recall  96.4%  id  95.8%  err_med refined 0.1824 / coarse 0.4495 px  (n_gt=824)
+     diff_ambient =     0.2: recall  96.0%  id  94.3%  err_med refined 0.3097 / coarse 0.4948 px  (n_gt=848)
+     diff_ambient =     0.4: recall  97.8%  id  93.1%  err_med refined 0.3950 / coarse 0.5349 px  (n_gt=857)
+     diff_ambient =     0.6: recall  96.2%  id  95.8%  err_med refined 0.3598 / coarse 0.5886 px  (n_gt=824)
+     diff_ambient =     0.8: recall  95.1%  id  98.3%  err_med refined 0.3961 / coarse 0.5230 px  (n_gt=843)
+     diff_ambient =    0.95: recall  92.2%  id  94.3%  err_med refined 0.4808 / coarse 0.6406 px  (n_gt=850)
+  -> paper/results_rev4/robustness/diff_ambient.json
+[diff_ratio] LED peak (vs ambient 0.45)
+       diff_ratio =     0.9: recall  98.1%  id  95.5%  err_med refined 0.2832 / coarse 0.4983 px  (n_gt=824)
+       diff_ratio =     0.6: recall  95.3%  id  95.7%  err_med refined 0.3890 / coarse 0.5468 px  (n_gt=848)
+       diff_ratio =     0.4: recall  97.0%  id  93.6%  err_med refined 0.4818 / coarse 0.5911 px  (n_gt=857)
+       diff_ratio =    0.25: recall  97.3%  id  96.6%  err_med refined 0.4487 / coarse 0.6047 px  (n_gt=824)
+       diff_ratio =    0.15: recall  95.4%  id  95.4%  err_med refined 0.5463 / coarse 0.6368 px  (n_gt=843)
+  -> paper/results_rev4/robustness/diff_ratio.json
+[diff_ghosting] inter-frame shift (px)
+    diff_ghosting =     0.0: recall  93.0%  id  95.8%  err_med refined 0.1841 / coarse 0.4522 px  (n_gt=824)
+    diff_ghosting =     0.5: recall  95.3%  id  93.7%  err_med refined 0.3829 / coarse 0.5580 px  (n_gt=848)
+    diff_ghosting =     1.0: recall  98.6%  id  93.8%  err_med refined 0.4830 / coarse 0.6078 px  (n_gt=857)
+    diff_ghosting =     2.0: recall  96.4%  id  95.7%  err_med refined 0.3056 / coarse 0.5280 px  (n_gt=824)
+    diff_ghosting =     3.0: recall  96.6%  id  97.3%  err_med refined 0.2268 / coarse 0.4567 px  (n_gt=843)
+  -> paper/results_rev4/robustness/diff_ghosting.json

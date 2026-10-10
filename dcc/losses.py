@@ -7,25 +7,27 @@ import torch
 import torch.nn.functional as F
 
 
-def focal(logits, y, alpha=2, beta=4):
-    """CornerNet penalty-reduced focal, logit space (bf16-safe), sum reduction.
-    Positives are the exact-1.0 cells (targets.py forces them reachable)."""
+def focal(logits, y, alpha=2, beta=4, mask=None):
+    """CornerNet penalty-reduced focal, logit space (bf16-safe), sum reduction."""
     z = logits.float()
     pos = y == 1.0
     l_pos = (1 - torch.sigmoid(z)) ** alpha * F.logsigmoid(z) * pos
     l_neg = (1 - y) ** beta * torch.sigmoid(z) ** alpha * F.logsigmoid(-z) * ~pos
+    if mask is not None:
+        l_pos, l_neg = l_pos * mask, l_neg * mask
     return -(l_pos.sum() + l_neg.sum())
 
 
-def strict_bce(logits, y):
+def strict_bce(logits, y, mask=None):
     """ABLATION A-CE counterpart to focal(): the STRICT reading of the same targets."""
     z = logits.float()
     pos = (y == 1.0).float()
-    return F.binary_cross_entropy_with_logits(z, pos, reduction="sum")
+    weight = None if mask is None else torch.broadcast_to(mask.float(), z.shape)
+    return F.binary_cross_entropy_with_logits(z, pos, weight=weight, reduction="sum")
 
 
 def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_form="focal",
-                   beta=4, alpha=2, loss_form_hm=None, loss_form_cls=None):
+                   beta=4, alpha=2, loss_form_hm=None, loss_form_cls=None, hm_mask=None, cls_mask=None):
     """Batch-normalised by total visible corners, shared N for both heads; clamped so N=0 batches
     (all-negative, no visible corners) divide by 1 instead of by zero. loss_form="ce" swaps BOTH
     heads to strict_bce (A-CE).
@@ -35,9 +37,9 @@ def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_f
     cls_form = loss_form_cls or loss_form
     assert {hm_form, cls_form} <= {"focal", "ce"}, \
         f"loss_form must be 'focal' or 'ce', got hm={hm_form!r} cls={cls_form!r}"
-    head = lambda logit, target, form: (strict_bce(logit, target) if form == "ce"
-                                        else focal(logit, target, alpha=alpha, beta=beta))
-    return (head(hm_logit, hm_t, hm_form) + lam * head(cls_logit, cls_t, cls_form)) / n
+    head = lambda logit, target, form, mask: (strict_bce(logit, target, mask=mask) if form == "ce"
+                                              else focal(logit, target, alpha=alpha, beta=beta, mask=mask))
+    return (head(hm_logit, hm_t, hm_form, hm_mask) + lam * head(cls_logit, cls_t, cls_form, cls_mask)) / n
 
 
 def loss_kwargs(cfg):

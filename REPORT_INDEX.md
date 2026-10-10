@@ -9,6 +9,7 @@ config that was trained, the tooling that produced each number and figure, and t
 | `paper/conv_chart.tex`, `paper/conv_chart.pdf`, `paper/figs/` | the paper source, its last build, and its figures |
 | `paper/conference/` | the conference deck, notes and figures |
 | `figures/` | the conference deliverables (headline panel, pose and cost tables, architecture) |
+| `paper/results_rev6/00_REPORT_REFERENCE/CONV_CHART_REFERENCE.md` | **the single complete reference**: the facts document plus every figure (253, also in `figures/`), table and record of the results tree, all ablation arms with learning curves, historical material labelled; built by `tools/build_report_reference.py` |
 | `paper/results_rev6/00_FACTS_FOR_REPORT.md` | **start here**: every fact about the board, models, pipeline, training, data, evaluation, results, ablations, deployment, transfer and testing, each with its source file, plus the list of places where older documents and the paper disagree with the artefacts |
 | `paper/results_rev6/` | **results of record** (rev-6 generator; release models `rel_w25_lam2_100k_rev6` 222k, `rel_w375_lam15_100k_rev6` 502k, `rel_w882_c2_100k_rev6` 882k) -- one directory per study, each with a README stating provenance for every number; `PLAN_autonomous_campaign.md` is the dated campaign log |
 | `paper/results_rev5/` | the superseded rev-5 generator revision (`00_SUPERSEDED.md`, `00_README_START_HERE.md`); kept for the record, never for headline numbers |

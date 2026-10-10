@@ -551,8 +551,13 @@ def main():
     optim = torch.optim.AdamW(param_groups(model, tcfg["wd"], lr_mult=ft["lr_mult"] if ft else None),
                               lr=tcfg["lr"], betas=(0.9, 0.999))
     if ft:
+        # freeze_bn holds EVERY BatchNorm on its running statistics, trainable or not. Required for a
+        # checkpoint rebuilt from ONNX (dcc.onnx_import, bn_folded): its BNs are exact identities carrying
+        # the folded calibration, which batch statistics would overwrite. Also the usual choice for
+        # small-batch fine-tuning on a narrow real corpus.
+        freeze_bn = bool(ft.get("freeze_bn", False) or src.get("bn_folded", False))
         for m in model.modules():
-            if isinstance(m, bn_types) and not any(p.requires_grad for p in m.parameters(recurse=False)):
+            if isinstance(m, bn_types) and (freeze_bn or not any(p.requires_grad for p in m.parameters(recurse=False))):
                 m.eval()
         n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"[train_detector] finetune from {ft['from']} (step {finetuned_from['step']}): "
@@ -580,7 +585,14 @@ def main():
     stream_seed = cfg["synth"]["train_seed"] * 1000 + resume_count
     print(f"[train_detector] stream_seed={stream_seed} resume_count={resume_count} start_step={step}")
 
-    train_ds = SynthStream(cfg, stream="detector", seed=stream_seed, render_targets=True)
+    if cfg.get("real"):
+        # real-frame fine-tuning (tools/video_bootstrap.py): harvested video pseudo-labels mixed into the
+        # synthetic stream at real.frac, each sample carrying the masks of what its label does not know
+        from dcc.realdata import MixedStream
+        train_ds = MixedStream(cfg, seed=stream_seed)
+        print(f"[train_detector] real frames: {cfg['real']['records']} at frac={cfg['real'].get('frac')}")
+    else:
+        train_ds = SynthStream(cfg, stream="detector", seed=stream_seed, render_targets=True)
     train_loader = DataLoader(train_ds, batch_size=tcfg["batch"], num_workers=tcfg["workers"],
                                multiprocessing_context="spawn", persistent_workers=True, pin_memory=True,
                                prefetch_factor=tcfg["prefetch_factor"], worker_init_fn=_worker_init)
@@ -615,11 +627,14 @@ def main():
         cts = batch["classes"].to(device, non_blocking=True)
         nvis = batch["n_vis"].to(device, non_blocking=True)
         n_samples += images.shape[0]
+        # masks exist only on the real-frame stream (dcc.realdata); absent = every element trained
+        hm_mask = batch["hm_mask"].unsqueeze(1).to(device, non_blocking=True).float() if "hm_mask" in batch else None
+        cls_mask = batch["cls_mask"].to(device, non_blocking=True).float() if "cls_mask" in batch else None
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             hm_logits, cls_logits = model(images)
             loss = detector_loss(hm_logits, cls_logits, hms, cts, nvis.sum(), cfg["lambda_cls"],
-                                  **loss_kwargs(cfg)) / accum
+                                  hm_mask=hm_mask, cls_mask=cls_mask, **loss_kwargs(cfg)) / accum
         loss.backward()
         accum_loss += float(loss.detach()) * accum
         micro += 1

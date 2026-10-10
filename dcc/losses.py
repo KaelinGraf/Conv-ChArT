@@ -7,17 +7,24 @@ import torch
 import torch.nn.functional as F
 
 
-def focal(logits, y, alpha=2, beta=4):
+def focal(logits, y, alpha=2, beta=4, mask=None):
     """CornerNet penalty-reduced focal, logit space (bf16-safe), sum reduction.
-    Positives are the exact-1.0 cells (targets.py forces them reachable)."""
+    Positives are the exact-1.0 cells (targets.py forces them reachable).
+
+    mask (optional, broadcastable to logits): per-element weight, 0 = no gradient. It carries the
+    third label state real-frame pseudo-labels need -- "position known, visibility unknown" -- which
+    neither the positive nor the negative branch can express (see dcc/realdata.py). None is
+    bit-identical to the unmasked loss."""
     z = logits.float()
     pos = y == 1.0
     l_pos = (1 - torch.sigmoid(z)) ** alpha * F.logsigmoid(z) * pos
     l_neg = (1 - y) ** beta * torch.sigmoid(z) ** alpha * F.logsigmoid(-z) * ~pos
+    if mask is not None:
+        l_pos, l_neg = l_pos * mask, l_neg * mask
     return -(l_pos.sum() + l_neg.sum())
 
 
-def strict_bce(logits, y):
+def strict_bce(logits, y, mask=None):
     """ABLATION A-CE counterpart to focal(): the STRICT reading of the same
     targets. Only the exact-1.0 cells are positive; every other cell is an
     equally-wrong negative, with no Gaussian partial credit and no (1-y)^beta
@@ -29,11 +36,12 @@ def strict_bce(logits, y):
     near-miss in proportion to how near it is, strict_bce() does not."""
     z = logits.float()
     pos = (y == 1.0).float()
-    return F.binary_cross_entropy_with_logits(z, pos, reduction="sum")
+    weight = None if mask is None else torch.broadcast_to(mask.float(), z.shape)
+    return F.binary_cross_entropy_with_logits(z, pos, weight=weight, reduction="sum")
 
 
 def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_form="focal",
-                   beta=4, alpha=2, loss_form_hm=None, loss_form_cls=None):
+                   beta=4, alpha=2, loss_form_hm=None, loss_form_cls=None, hm_mask=None, cls_mask=None):
     """Batch-normalised by total visible corners, shared N for both heads;
     clamped so N=0 batches (all-negative, no visible corners) divide by 1
     instead of by zero. loss_form="ce" swaps BOTH heads to strict_bce (A-CE).
@@ -65,7 +73,11 @@ def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_f
     gain but only 8.5% of its identity gain. So the penalty discount governs the HEATMAP and the
     focal->BCE switch -- which also drops alpha's easy-negative modulation on the CLASS head --
     governs IDENTITY. Switching both heads together, as loss_form alone does, cannot separate
-    them or take the better of each. Default None keeps the old single-lever behaviour exactly."""
+    them or take the better of each. Default None keeps the old single-lever behaviour exactly.
+
+    hm_mask / cls_mask (2026-10-09, real-frame fine-tuning): per-element weights shaped like the
+    logits, 0 where a pseudo-label's visibility is unknown or its exact pixel is uncertain. Synthetic
+    labels are exact everywhere, so synthetic samples carry all-ones masks (or None)."""
     n = max(float(n_vis_batch), 1.0)
     hm_form = loss_form_hm or loss_form
     cls_form = loss_form_cls or loss_form
@@ -75,9 +87,9 @@ def detector_loss(hm_logit, cls_logit, hm_t, cls_t, n_vis_batch, lam=1.0, loss_f
     # cannot catch it either. All 49 live values are valid; this makes the 50th fail at step 0.
     assert {hm_form, cls_form} <= {"focal", "ce"}, \
         f"loss_form must be 'focal' or 'ce', got hm={hm_form!r} cls={cls_form!r}"
-    head = lambda logit, target, form: (strict_bce(logit, target) if form == "ce"
-                                        else focal(logit, target, alpha=alpha, beta=beta))
-    return (head(hm_logit, hm_t, hm_form) + lam * head(cls_logit, cls_t, cls_form)) / n
+    head = lambda logit, target, form, mask: (strict_bce(logit, target, mask=mask) if form == "ce"
+                                              else focal(logit, target, alpha=alpha, beta=beta, mask=mask))
+    return (head(hm_logit, hm_t, hm_form, hm_mask) + lam * head(cls_logit, cls_t, cls_form, cls_mask)) / n
 
 
 def loss_kwargs(cfg):

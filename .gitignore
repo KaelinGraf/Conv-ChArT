@@ -13,6 +13,8 @@ spec/
 memory.md
 ablations.md
 paper/
+# third-party reference papers (arXiv PDFs etc.) -- reading material, not ours to redistribute
+research/
 audit640/
 eval_pose*/
 
@@ -93,6 +95,7 @@ tools/*
 !tools/train_detector.py
 !tools/train_refiner.py
 !tools/introspect.py
+!tools/video_bootstrap.py
 
 tests/*
 !tests/test_synth.py
@@ -101,6 +104,7 @@ tests/*
 !tests/test_pipeline.py
 !tests/test_trainutil.py
 !tests/test_viz.py
+!tests/test_video.py
 
 docs/*
 !docs/ARCHITECTURE.md

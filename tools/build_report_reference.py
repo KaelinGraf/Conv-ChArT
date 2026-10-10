@@ -262,17 +262,30 @@ def main():
     rows = []
     for p in sorted((R6 / "08_ablations").glob("*/train_metrics.json")):
         d = load(p); f = d["final_val"]; oc = d.get("m04_by_octave_final") or {}
-        rows.append([p.parent.name, d["steps_trained"], d["n_validations"], f4(f.get("m01_median")), f4(f.get("m01_p95")), pct(f.get("m01_tail_gt4px")), pct(f.get("m04")),
-                     " / ".join(pct(oc.get(k)) for k in ("12-16", "16-32", "32-64", "64-128")), f4(f.get("val_loss"))])
-    doc.append("**Summary of all 61 banked arms** (final validation; `08_ablations/<arm>/train_metrics.json`):\n")
-    table(["arm", "steps", "n val", "M-01 median px", "p95 px", "tail > 4 px", "M-04", "M-04 by octave", "val loss"], rows)
+        full = "no run log here"
+        log_ = ROOT / "runs" / d["run"] / "metrics.jsonl"
+        if log_.exists():
+            fv = [json.loads(l) for l in open(log_) if '"full_val"' in l]
+            if fv:
+                r = fv[-1]; v = r["full_val"]
+                full = f"{f4(v['m01']['median'])} / {f4(v['m01']['p95'])} / {pct(v['m01'].get('tail_frac_gt4px'))} / {pct(v['m04']['accuracy'])} @ {r['step']}"
+            else:
+                full = "none logged"
+        rows.append([p.parent.name, d["steps_trained"], f4(f.get("m01_median")), f4(f.get("m01_p95")), pct(f.get("m01_tail_gt4px")), pct(f.get("m04")),
+                     " / ".join(pct(oc.get(k)) for k in ("12-16", "16-32", "32-64", "64-128")), full])
+    doc.append("**Summary of all 61 banked arms.** The first block of columns is the arm's final **in-loop 2,000-sample** validation "
+               "(`08_ablations/<arm>/train_metrics.json`, which is what the per-arm records below hold); the last column is the "
+               "**10,000-sample full validation** at the final step from the run log where this machine has it. Part A and the paper "
+               "quote the full validation; the in-loop value reads about 0.1-0.2 pp optimistic (campaign log, Part 1 header), so the two "
+               "differ slightly for the same arm by construction, e.g. `abl_wh_ce_35k_rev6` p95 0.6983 in-loop vs 0.6970 full.\n")
+    table(["arm", "steps", "in-loop median px", "in-loop p95 px", "in-loop tail > 4 px", "in-loop M-04", "in-loop M-04 by octave", "10k full val: median / p95 / tail / M-04 @ step"], rows)
     doc.append("**Learning curves by width group** (in-loop validation of every banked arm):\n")
     ablation_curves("882k_supervision", ["abl_wh_ctrl35k_rev6", "abl_wh_ce_35k_rev6", "abl_lx_wh_hmce_clsfocal_35k_rev6", "abl_lx_wh_hmfocal_clsce_35k_rev6", "abl_c2_wh_clsfocal_lam2_35k_rev6", "abl_c3_wh_lam2_35k_rev6", "abl_wh_s1_35k_rev6", "abl_wh_s025_35k_rev6"], "882k: supervision arms (control = focal/focal sigma 0.5)")
     ablation_curves("882k_structure", ["abl_wh_ctrl35k_rev6", "abl_wh_heads4_35k_rev6", "abl_wh_attend16_35k_rev6", "abl_wh_attn1_35k_rev6", "abl_wh_rope5_35k_rev6", "abl_g_w50_a2_ce_nogate_35k_rev6", "abl_t_w50_a1_ce_35k_rev6"], "882k: structural arms")
     ablation_curves("502k", sorted(p.name for p in (R6 / "08_ablations").glob("*w375*")) + ["abl_r502_g32_35k_rev6", "abl_r502_lam2_35k_rev6", "abl_c5_w375_g32_lam2_scls05_35k_rev6"], "502k arms (incl. the four noise-floor seeds)")
     ablation_curves("222k", sorted(p.name for p in (R6 / "08_ablations").glob("*fast*")) + sorted(p.name for p in (R6 / "08_ablations").glob("*w25*")) + ["abl_c1_fast_g32_lam2_35k_rev6", "abl_c4_fast_g32_lam2_scls05_35k_rev6"], "222k arms (incl. the four noise-floor seeds)")
     ablation_curves("4p7M_and_width", ["abl_composite_s05_50k_rev6", "abl_sigma025_50k_rev6", "abl_width_half_50k_rev6", "abl_nodilate_width_half_s05_50k_rev6", "abl_nodilate_width_half_xsa_s05_50k_rev6", "abl_nodilate_width_quarter_s05_30k_rev6", "abl_nodilate_width_quarter_xsa_s05_30k_rev6"], "4.7M-base and width arms (50k / 30k budgets)")
-    doc.append("\n**Per-arm records** (each arm's `train_metrics.md`, verbatim):\n")
+    doc.append("\n**Per-arm records** (each arm's `train_metrics.md`, verbatim; in-loop 2,000-sample validation, see the note above):\n")
     for p in sorted((R6 / "08_ablations").glob("*/train_metrics.md")):
         include_md(p, shift=5, strip_title=False)
     doc.append("\n**Per-regime ablations on the 4.7M base** (A1 conv-only, A-CE one-hot, A-XSA; sweeps on identical frames, n = 100/step, coarse arm; the reference is `abl_reference_50k_rev6`):\n")

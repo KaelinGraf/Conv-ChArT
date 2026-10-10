@@ -1,3 +1,6 @@
+"""Networks: shapes, parameter counts, initialisation, RoPE, losses, ONNX export, gradient flow.
+    PYTHONPATH= python -m pytest tests/test_model.py -q
+"""
 import math
 import sys
 from pathlib import Path
@@ -33,21 +36,14 @@ def test_param_count_full():
 
 
 def test_refiner_width_default_is_backward_compatible():
-    """width_mult became a Refiner argument on 2026-07-31 so the small tiers can shrink the
-    fixed 97,056-param refiner (36% of the 172k detector's total). The default MUST reproduce
-    the original architecture exactly, or every banked refiner checkpoint stops loading."""
     from dcc.model import refiner_for
     base = Refiner()
     assert sum(p.numel() for p in base.parameters()) == 97_056
-    # `out` always emits r^2 = 64 channels regardless of width -- PixelShuffle(8) requires it.
     for w in (1.0, 0.5, 0.375, 0.25):
         r = Refiner(width_mult=w)
         assert r.out.out_channels == 64, w
         assert tuple(r(torch.randn(2, 1, 24, 24)).shape) == (2, 1, 64, 64), w
-        assert set(r.state_dict()) == set(base.state_dict()), w      # names stable across widths
-        # a checkpoint round-trips into a Refiner built by inference from its own weights
-        # `assert X is not None or True` was unfailable, so this never tested anything. Assert the
-        # inferred WIDTH and a strict (non-default) load -- the two things that actually break.
+        assert set(r.state_dict()) == set(base.state_dict()), w
         inferred = refiner_for(r.state_dict())
         assert inferred.body[1][0].out_channels == r.body[1][0].out_channels, w
         inferred.load_state_dict(r.state_dict(), strict=True)
@@ -82,20 +78,16 @@ def test_stable_names():
 
 
 def test_rope_no_global_alias():
-    grid_h, grid_w = 75, 100          # DetectorNet(1200,1600)'s H/16 bottleneck grid
-    head_dim = 256 // 8               # d=256, heads=8 defaults
+    grid_h, grid_w = 75, 100
+    head_dim = 256 // 8
     n = head_dim // 4
     rope = AxialRoPE(head_dim, grid_h, grid_w, lambda_min=2.5)
-    cos, sin = rope.cos[0, 0], rope.sin[0, 0]        # (T, 2n)
+    cos, sin = rope.cos[0, 0], rope.sin[0, 0]
 
-    # Analytic: the phase increment between adjacent columns (row=0) is
-    # exactly each axis's own per-cell omega, for the col-axis half of the
-    # vector (indices n..2n-1); the row-axis half (0..n-1) is unaffected by
-    # column and serves as an internal sanity check.
     ph0 = torch.atan2(sin[0], cos[0])
     ph1 = torch.atan2(sin[1], cos[1])
     dphi = torch.atan2(torch.sin(ph1 - ph0), torch.cos(ph1 - ph0))
-    assert dphi[:n].abs().max() < 1e-5                    # row-axis: unaffected by column
+    assert dphi[:n].abs().max() < 1e-5
     col_omegas = dphi[n:2 * n].abs()
 
     lambda_max_cells = (2 * math.pi / col_omegas.min()).item()
@@ -103,8 +95,6 @@ def test_rope_no_global_alias():
     assert lambda_max_cells >= 2 * max(grid_h, grid_w) - 1e-3
     assert lambda_min_cells >= 2.4
 
-    # Sampled check: 2000 distinct in-grid position pairs, full 2n-dim phase
-    # vector differs by L-inf > 1e-3 rad (empirical no-alias guard).
     torch.manual_seed(0)
     T = grid_h * grid_w
     gi = torch.randint(0, T, (4000,))
@@ -132,17 +122,6 @@ def test_loss_finite_n0():
         assert p.grad is not None, name
         assert torch.isfinite(p.grad).all(), name
 
-    # Repeat with bf16-precision logits (what an autocast forward would hand
-    # the loss), cast AFTER a plain-fp32 forward rather than running the model
-    # itself under torch.autocast: this machine's oneDNN build has no bf16
-    # Conv2d-backward kernel for its (non-AVX-512) CPU -- confirmed by direct
-    # probe, an environment/library limitation orthogonal to what's under test
-    # (Linear/SDPA/BatchNorm2d/LayerNorm all backward fine in bf16 on this
-    # CPU; only oneDNN's conv path lacks the kernel). Casting logits to bf16
-    # post-hoc exercises exactly the property the guarantee is about -- the
-    # loss's robustness to bf16-precision logit values -- while every
-    # parameter's own backward still runs through Conv2d in its native fp32
-    # (the model's forward never entered autocast), portable to any CPU.
     m.zero_grad(set_to_none=True)
     hm2, cls2 = m(x)
     with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
@@ -156,7 +135,6 @@ def test_loss_finite_n0():
 
 
 def _focal_scalar(z, y, alpha=2, beta=4):
-    """Independent, unvectorised reference: same formula, plain Python math."""
     p = 1.0 / (1.0 + math.exp(-z))
     if y == 1.0:
         return -((1 - p) ** alpha) * math.log(p)
@@ -170,7 +148,7 @@ def test_loss_y1_branch():
 
     loss1 = focal(logits, y1)
     loss_near = focal(logits, y_near)
-    assert abs(loss1.item() - loss_near.item()) > 1e-3      # exact-1.0 branch fires distinctly
+    assert abs(loss1.item() - loss_near.item()) > 1e-3
 
     reference = sum(_focal_scalar(z, yv) for z, yv in
                     zip(logits.flatten().tolist(), y1.flatten().tolist()))
@@ -192,9 +170,6 @@ def test_forward_deterministic():
 
 
 def test_xsa_default_off_is_noop():
-    """xsa is an optional, default-off flag -- must not perturb the headline
-    model (mid-training as of this writing). No xsa arg vs xsa=False must
-    build identical params and produce bit-identical output."""
     torch.manual_seed(0)
     m1 = DetectorNet(64, 64)
     torch.manual_seed(0)
@@ -206,7 +181,7 @@ def test_xsa_default_off_is_noop():
     for (n1, t1), (n2, t2) in zip(p1, p2):
         assert n1 == n2
         assert torch.equal(t1, t2), n1
-    assert sum(t.numel() for _, t in p1) == sum(t.numel() for _, t in p2)   # xsa adds no parameters
+    assert sum(t.numel() for _, t in p1) == sum(t.numel() for _, t in p2)
 
     m1.eval(); m2.eval()
     x = torch.randn(2, 1, 64, 64)
@@ -217,12 +192,6 @@ def test_xsa_default_off_is_noop():
 
 
 def test_xsa_orthogonal_to_self_value():
-    """With xsa=True, each head's post-XSA attention output (proj's actual
-    input, tapped live off the real forward -- not re-derived from the XSA
-    formula) must be orthogonal to that head's own value vector by
-    construction (Zhai eq. 2). Wrong dim in F.normalize, or applying after
-    proj / after head concat instead of per-head before it, would leave a
-    nonzero cosine here."""
     torch.manual_seed(0)
     m = DetectorNet(64, 64, xsa=True).eval()
     x = torch.randn(2, 1, 64, 64)
@@ -239,9 +208,9 @@ def test_xsa_orthogonal_to_self_value():
 
     assert len(blk_in) == len(proj_in) == len(m.blocks)
     for blk, xin, pin in zip(m.blocks, blk_in, proj_in):
-        _, _, v = blk.qkv_heads(blk.n1(xin))                    # (B, heads, T, head_dim)
+        _, _, v = blk.qkv_heads(blk.n1(xin))
         B, T, d = xin.shape
-        z = pin.reshape(B, T, blk.heads, d // blk.heads).transpose(1, 2)  # invert forward's reshape
+        z = pin.reshape(B, T, blk.heads, d // blk.heads).transpose(1, 2)
         cos = F.cosine_similarity(z, v, dim=-1)
         assert cos.abs().max().item() < 1e-5, cos.abs().max().item()
 
@@ -258,7 +227,7 @@ def test_onnx_export(tmp_path):
     det_ops = {n.op_type for n in det_onnx.graph.node}
     assert not (det_ops & banned), det_ops & banned
 
-    m_xsa = DetectorNet(240, 320, xsa=True).eval()   # F.normalize/mul/sum/sub are ONNX-standard, confirm rather than assume
+    m_xsa = DetectorNet(240, 320, xsa=True).eval()
     xsa_path = str(tmp_path / "detector_xsa.onnx")
     torch.onnx.export(m_xsa, torch.randn(1, 1, 240, 320), xsa_path, opset_version=17,
                       dynamo=False, input_names=["input"], output_names=["hm", "cls"])
@@ -292,10 +261,6 @@ def test_gradflow_gates_and_attention():
 
 
 def test_refiner_loss_shape_and_value():
-    """Regression guard for the (B,1,64,64) logits vs (B,64,64) targets shape
-    mismatch: an unhandled broadcast pairs every logit-crop against every
-    target-crop instead of matching them one-to-one. Reference computed via
-    per-item focal() calls (B=1 slices), which sidestep the ambiguity."""
     torch.manual_seed(0)
     B = 3
     logits = torch.randn(B, 1, 64, 64)

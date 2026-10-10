@@ -1,3 +1,5 @@
+# configs/, tools/, tests/ and docs/ are default-deny: only files named with ! are published.
+# To publish another file there, add a !path line.
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -8,82 +10,24 @@ audit/
 introspect_out/
 *.pt
 *.onnx
-# internal working notes and source specs -- not part of the public tree
 spec/
 memory.md
 ablations.md
 paper/
-# third-party reference papers (arXiv PDFs etc.) -- reading material, not ours to redistribute
 research/
 audit640/
 eval_pose*/
 
-# comparison/baseline arm -- paper-support only, never part of the public tree.
-# tools/charuconet.py copies dcModel byte-for-byte from JunkyByte/deepcharuco
-# (MIT, Copyright (c) 2023 JunkyByte); shipping it would put third-party
-# licensed code in this repo's release. The rest is our own work but exists
-# solely to score baselines for the paper, so it ships with the paper, not
-# with the method. The vendored upstream lives outside this repo entirely
-# (/home/kaelin/p4p/external/deepcharuco).
 eval_classical/
 factor_sweep*/
 
-# ---------------------------------------------------------------------------
-# 2026-07-30: keep the PUBLIC tree to the METHOD -- the model, the data
-# generator, the training loops, and the configs of the models we actually
-# ship. Everything below is either bulk output, machine-specific operations,
-# or paper/figure production: real work, but not what someone cloning this
-# repo to use or check the method needs.
-# ---------------------------------------------------------------------------
-
-# bulk artefacts
 audit_rev*/
 logs/
 
-# internal working instructions for the agent, not project documentation
 CLAUDE.md
 
-# OPERATIONS: machine-specific orchestration for this one workstation
-# (queue supervision, boot self-heal, thermal/stall watchdog). Hardcodes
-# absolute paths, core masks and this box's failure history; useless and
-# misleading anywhere else.
-
-# EVALUATION AND SWEEPS: produce the paper's numbers, not the method
-
-# FIGURE AND DOCUMENT PRODUCTION: renders the deck/paper, not the model
-
-# ABLATION CONFIGS: the experiment record, not the shipped models. The two
-# models this repo ships (Conv-ChArT, Conv-ChArT-FAST), their XSA variants,
-# and the baseline they were cut from ARE tracked -- see configs/.
-#
-# GLOB + EXPLICIT EXCEPTIONS, replacing the hand-maintained deny-list (2026-07-31). The campaign
-# now generates arms continuously via tools/cut_ablation.py, and a deny-list silently leaks every
-# arm nobody remembered to add. Default-deny with named exceptions is the only version that stays
-# correct as arms accumulate: to SHIP a config, name it below; everything else is experiment record.
-
-# ABLATION TOOLING: cuts and verifies experiment configs. Useless once the arms are chosen.
-
-# figures/ is DELIBERATELY NOT IGNORED: paper/ is, so the conference
-# deliverables (headline panel, pose table, cost table, architecture) are
-# copied there to be pullable without the 295 MB of paper working files.
-
-# figures/ removed from the public release (Kaelin, 2026-07-30). Conference
-# deliverables stay local; they were purged from history, not just deleted, so
-# they are not retrievable from an earlier commit either. Ignored here so a
-# later `git add -A` cannot quietly put them back.
 figures/
 
-# ---------------------------------------------------------------------------
-# PUBLIC TREE = DEFAULT-DENY (2026-08-31). The remote carries the METHOD only:
-# the library, the four entry points needed to generate data / train / inspect,
-# the conventions tests, and the deployment docs. Everything else -- evaluation
-# and sweep tooling, figure and paper production, baseline arms, ablation
-# configs, machine-specific operations -- is real work that lives locally and
-# ships with the paper, not with the method.
-#
-# Default-deny with named exceptions, not a deny-list: a deny-list silently
-# leaks every new file nobody remembered to add. To PUBLISH a file, name it.
-# ---------------------------------------------------------------------------
 configs/*
 !configs/default.yaml
 

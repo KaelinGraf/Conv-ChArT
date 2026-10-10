@@ -1,6 +1,5 @@
-"""Sample viewer — eyeball detector/refiner training samples and their
-GT targets before or during training. Argparse runs before any heavy import
-so --help never needs dcc/numpy/cv2/matplotlib.
+"""Sample viewer.
+    PYTHONPATH= python tools/view.py --stream detector|refiner --n 16 --out sheet.png [--index I] [--channels] [--show]
 """
 import argparse
 import sys
@@ -24,8 +23,6 @@ def build_parser():
 
 
 def _detector_samples(SynthVal, cfg, args):
-    # --index must reproduce the CANONICAL val set: SynthVal's stratified s
-    # depends on n, so index mode pins n to cfg val_size, not index+1.
     n_needed = cfg["synth"]["val_size"] if args.index is not None else args.n
     ds = SynthVal(cfg, n_needed, args.seed)
     idxs = [args.index] if args.index is not None else list(range(args.n))
@@ -36,7 +33,7 @@ def _refiner_samples(RefinerVal, cfg, args):
     if args.index is not None:
         crops = RefinerVal(cfg, args.index + 1, args.seed)[args.index]
         return [(args.index, c) for c in crops[:args.n]]
-    cap = args.n * 4 + 8                        # composites needed to likely yield n crops
+    cap = args.n * 4 + 8
     ds = RefinerVal(cfg, cap, args.seed)
     flat = []
     for i in range(cap):
@@ -55,7 +52,7 @@ def _detector_panels(targets, viz, i, image, record, cfg, seed):
     size_wh = (image.shape[1], image.shape[0])
     hm = targets.render_heatmap(pts, vis, size_wh, sigma=cfg["sigma_hm"])
     ct = targets.render_class_targets(pts, vis, idx, size_wh, sigma=cfg["sigma_cls"])
-    cls_up = np.repeat(np.repeat(ct.max(axis=0), 4, axis=0), 4, axis=1)   # cell j -> px 4j..4j+3
+    cls_up = np.repeat(np.repeat(ct.max(axis=0), 4, axis=0), 4, axis=1)
     tag = (f"idx={i} seed={seed} NEGATIVE" if not record["board_present"] else
            f"idx={i} seed={seed} s={record['s_px']:.1f}px vis={int(vis.sum())}/{len(corners)}")
     panels = [(f"overlay | {tag}", viz.draw_overlay(image, record)),

@@ -1,47 +1,8 @@
-"""tools/train_detector.py -- MT-05 Stage 1 (detector) training loop.
-
-Recipe (all sourced from cfg["train"]): AdamW (lr, betas=(0.9,0.999), wd via
-dcc.trainutil.param_groups so biases/norm params skip weight decay), micro-
-batch cfg.train.batch x cfg.train.accum grad-accumulation steps per
-optimizer step, bf16 autocast + channels_last, grad-clip by global norm
-after accumulation (before the optimizer step), cosine LR + EMA update per
-optimizer step. Validation runs forward passes on a second `eval_model`
-instance loaded from EMA weights (ema.copy_to), so the live training model's
-mode/grads are never disturbed by validation. Every validation pass also
-dumps the first 3 images' draw_overlay/heatmap_overlay panels to
-runs/<name>/preview/ -- a numeric gate alone missed a visually-obvious
-generator defect once (see tools/preflight.py's generator_lock), so a human
-glance at real predictions rides alongside the M-01/M-02/M-04 numbers below.
-
-Metrics per MT-05: M-01 (coarse localisation error vs visible GT, matched by
-greedy NN within cfg.train.match_px; TAIL_PX=4 is MT-03's refiner capture
-range, the tail-fraction gate -- a fixed spec constant, not a config key),
-M-02 (match ratio by s-octave, bins per test_generator.py's convention:
-[12,16) [16,32) [32,64) [64,128], last bin closed; the sub-octave low bin is
-the corner-only regime -- markers unreadable), and M-04 (ID accuracy on matched
-corners, by octave) via a LAZY import of dcc.pipeline.read_ids -- that
-module owns the bilinear ID readout (one canonical implementation); if it
-isn't importable yet, M-04 is skipped with a one-time warning, never
-reimplemented here.
-
-P1/P2 diagnostics (gate3/gate4 alpha stats; per-block attention entropy on
-one fp32 val image) are read via forward hooks on model.gate3/gate4/blocks
-that recompute the signal from dcc.model's own exposed pieces rather than
-reimplementing the gate/attention math: AttnGate.alpha(skip, g) (forward
-itself returns only the gated skip) for P1, and Block.n1/qkv_heads (forward
-runs attention through F.scaled_dot_product_attention, which never
-materialises softmax(QK^T)) for P2. If a hooked module lacks these methods,
-its diagnostic is silently omitted after one warning: this is instrumentation
-around a dcc.model contract that could still change, not an acceptance gate,
-so it must never crash a training run.
-
-wandb mirroring is config-gated (cfg["train"]["wandb"]["enabled"], default
-false) and strictly best-effort alongside metrics.jsonl, never a replacement
-for it: every _wandb_* call swallows its own exceptions (warn-once via
-_warn_once) so a telemetry outage (bad API key, no network, a wandb-side
-error) can never crash or stall the run. When enabled, the run ID and URL
-print as an unmissable `WANDB_RUN_ID=... WANDB_RUN_URL=...` line right after
-init, for a supervising process to parse.
+"""Stage-1 detector training.
+    PYTHONPATH= python tools/train_detector.py --config C --name N [--steps S] [--resume CKPT] [--workers W]
+        [--freeze-trunk] [--retarget-from CKPT]
+Writes runs/N/metrics.jsonl and checkpoints. A finetune: block in the config starts from a trained
+checkpoint; a real: block mixes in harvested video frames (tools/video_bootstrap.py).
 """
 import argparse
 import sys
@@ -49,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-TAIL_PX = 4.0  # MT-01/MT-03: M-01's blocking tail threshold, sensor px (rho=1 here == input px)
+TAIL_PX = 4.0
 OCTAVE_BINS = (("12-16", 12.0, 16.0), ("16-32", 16.0, 32.0), ("32-64", 32.0, 64.0), ("64-128", 64.0, 128.0))
 _WARNED = set()
 
@@ -92,12 +53,6 @@ _EARLY_STOP_DEFAULTS = {"enabled": False, "patience": 3, "min_steps": 100000, "t
 
 
 def _early_stop_series(window, get, direction):
-    """One monitored metric's relative improvement across `window`
-    (chronological full-val entries): direction="lower" (m01 mean) or
-    "higher" (m02/m04 ratios). None if `get` is missing/None for ANY entry
-    in `window` -- an unevaluable metric (empty octave bucket, m04 before
-    dcc.pipeline is importable) drops out of the decision below rather than
-    blocking or forcing a stop."""
     values = [get(h) for h in window]
     if any(v is None for v in values):
         return None
@@ -108,23 +63,12 @@ def _early_stop_series(window, get, direction):
 
 
 def early_stop_should_trigger(history, step, es_cfg):
-    """Pure decision function behind the config-gated early stop
-    (cfg["train"]["early_stop"]) -- factored out so it's testable without a
-    training loop. `history` is the chronological list of full-val result
-    dicts (run_validation()'s return shape, each additionally carrying its
-    own "step") seen so far; `step` is the current global step. Stops iff,
-    over the last `patience` consecutive full-vals: (1) m01's
-    tail_frac_gt4px stayed <= tail_gate at every one, AND (2) none of the
-    monitored metrics (m01 mean, each M-02 octave ratio, m04 accuracy)
-    improved >1% relative from the window's first value to its best value
-    inside the window -- i.e. training has both plateaued and stayed inside
-    the refiner's capture range throughout."""
     cfg = {**_EARLY_STOP_DEFAULTS, **(es_cfg or {})}
     if not cfg["enabled"] or step < cfg["min_steps"]:
         return False
     patience = cfg["patience"]
     if patience < 1 or len(history) < patience:
-        return False   # patience < 1: history[-0:] would slice the WHOLE history, not none of it
+        return False
     window = history[-patience:]
 
     tails = [h["m01"]["tail_frac_gt4px"] for h in window]
@@ -139,19 +83,12 @@ def early_stop_should_trigger(history, step, es_cfg):
 
 
 def _wandb_init(cfg, wandb_cfg, run_dir, name):
-    """Best-effort wandb run construction, gated by cfg["train"]["wandb"]
-    ["enabled"] (default false) -- None when disabled. Any failure here
-    (missing package, bad API key, no network) is a warn-once and training
-    proceeds without telemetry: metrics.jsonl remains the source of truth
-    regardless, same contract _wandb_log/_wandb_log_preview/_wandb_finish
-    below all share."""
     if not wandb_cfg.get("enabled", False):
         return None
     try:
         import wandb
         run = wandb.init(project=wandb_cfg.get("project", "conv-chart"), name=name,
                           mode=wandb_cfg.get("mode", "online"), dir=str(run_dir), config=cfg)
-        # Unmissable and grep-able: a supervising agent locates the run from this line.
         print(f"[train_detector] WANDB_RUN_ID={run.id} WANDB_RUN_URL={run.get_url()}")
         return run
     except Exception as e:
@@ -161,13 +98,6 @@ def _wandb_init(cfg, wandb_cfg, run_dir, name):
 
 
 def _wandb_flatten(fields):
-    """JsonlLogger-shaped kwargs -> wandb's flat metric namespace: a scalar
-    kwarg logs under its own key unchanged; a dict-valued kwarg (val=result,
-    full_val=result, early_stop={...}) becomes "<key>/<nested path,
-    underscore-joined>" per leaf -- e.g. val={"m01": {"mean": 1.2}} ->
-    {"val/m01_mean": 1.2}. None leaves are dropped (an unavailable metric,
-    e.g. m04 before dcc.pipeline is importable, shouldn't open a wandb chart
-    that would just stay empty)."""
     def walk(prefix, v, sep):
         if isinstance(v, dict):
             out = {}
@@ -183,9 +113,6 @@ def _wandb_flatten(fields):
 
 
 def _wandb_log(run, step, **fields):
-    """Mirrors exactly what logger.log(step, **fields) receives -- call this
-    alongside every JsonlLogger.log call, same kwargs, so the two stay in
-    lockstep by construction rather than by separately-maintained call sites."""
     if run is None:
         return
     try:
@@ -196,11 +123,6 @@ def _wandb_log(run, step, **fields):
 
 
 def _wandb_log_preview(run, preview_dir, step, group):
-    """Mirrors run_validation's first-3 preview PNGs -- already written to
-    preview_dir at these exact filenames by run_validation itself -- as
-    wandb.Image, keyed <group>/preview_<i>. Reads the files back rather than
-    threading a new return value through run_validation, so its existing
-    contract (and the tests that exercise it) stay untouched."""
     if run is None:
         return
     try:
@@ -224,10 +146,6 @@ def _wandb_finish(run):
 
 
 def _val_targets(cfg, record):
-    """Renders detector targets for one SynthVal (image, record) pair via
-    dcc.targets directly -- mirrors dcc.dataset._render_detector_targets
-    (private to that module) since SynthVal's raw-record shape differs from
-    SynthStream's dict-yield contract."""
     import numpy as np
     import torch
     from dcc.board import n_corners
@@ -258,9 +176,6 @@ def _val_collate(cfg, batch):
 
 
 def _match_greedy(gt_xy, det_xy, max_px):
-    """One-to-one nearest-neighbour match within max_px, closest pairs first
-    (standard greedy keypoint-matching protocol). Returns [(gt_i, det_i,
-    dist), ...]."""
     import numpy as np
     if len(gt_xy) == 0 or len(det_xy) == 0:
         return []
@@ -278,20 +193,12 @@ def _match_greedy(gt_xy, det_xy, max_px):
 
 
 def _gate_hook(name, captured):
-    """dcc.model.AttnGate exposes alpha(skip, g) separately from forward
-    (which returns only the gated skip tensor) -- recompute it from the same
-    (skip, g) the hook sees forward receive, rather than guessing at a
-    tuple-output contract forward doesn't have."""
     def fn(module, inputs, output):
         captured[name] = module.alpha(*inputs).detach()
     return fn
 
 
 def _block_hook(name, captured):
-    """dcc.model.Block runs attention via F.scaled_dot_product_attention,
-    which never materialises softmax(QK^T) -- so recompute it explicitly,
-    fp32, from the block's own (public) n1/qkv_heads, using the exact input
-    the hook sees forward receive."""
     def fn(module, inputs, output):
         x_normed = module.n1(inputs[0])
         q, k, _v = module.qkv_heads(x_normed)
@@ -301,7 +208,6 @@ def _block_hook(name, captured):
 
 
 def _register_gate_hooks(model):
-    """Cheap (1x1 conv) -- safe to leave attached for a whole batch sweep."""
     captured, handles = {}, []
     for gname in ("gate3", "gate4"):
         g = getattr(model, gname, None)
@@ -311,11 +217,6 @@ def _register_gate_hooks(model):
 
 
 def _register_block_hooks(model):
-    """Materialises a full (heads, T, T) attention matrix per block -- T is
-    the H/16 bottleneck token count (thousands at this input res), so this is
-    ONLY safe on a single image and must never be left attached across a
-    batched validation sweep (a B=8 sweep at T~7500 tried to allocate ~14GB
-    and OOM'd the whole run the first time this was smoke-tested)."""
     captured, handles = {}, []
     for i, blk in enumerate(getattr(model, "blocks", []) or []):
         if hasattr(blk, "qkv_heads") and hasattr(blk, "n1"):
@@ -328,7 +229,7 @@ def _diag_log_fields(captured):
     for gname in ("gate3", "gate4"):
         a = captured.get(gname)
         if a is not None:
-            a = a.float()  # bf16 autocast tensor -- torch.quantile requires float32/64
+            a = a.float()
             fields[f"{gname}_alpha_mean"] = float(a.mean())
             fields[f"{gname}_alpha_min"] = float(a.min())
             fields[f"{gname}_alpha_max"] = float(a.max())
@@ -347,11 +248,6 @@ def _diag_log_fields(captured):
 
 
 def run_validation(model, loader, cfg, device, tau_hm, match_px, preview_dir=None, step=None):
-    """Returns {val_loss, m01, m02, m04, diag}; m04 is None if dcc.pipeline
-    isn't importable yet. preview_dir/step (pass both together) additionally
-    dump the first 3 images' draw_overlay/heatmap_overlay side-by-side panels
-    to preview_dir/step_{step:07d}_val{i}.png -- pure visualisation, excluded
-    from every metric above."""
     import cv2
     import numpy as np
     import torch
@@ -368,19 +264,13 @@ def run_validation(model, loader, cfg, device, tau_hm, match_px, preview_dir=Non
     model.eval()
     gate_captured, gate_handles = _register_gate_hooks(model)
     errs, tail_hits = [], 0
-    octaves = {k: [0, 0] for k, _, _ in OCTAVE_BINS}     # name -> [matched, visible]
-    id_octaves = {k: [0, 0] for k, _, _ in OCTAVE_BINS}  # name -> [correct, total]
+    octaves = {k: [0, 0] for k, _, _ in OCTAVE_BINS}
+    id_octaves = {k: [0, 0] for k, _, _ in OCTAVE_BINS}
     loss_sum, loss_n, first_image, n_preview = 0.0, 0, None, 0
 
     with torch.no_grad():
         for images, hms, cts, nvis, records in loader:
             images = images.to(device, non_blocking=True, memory_format=torch.channels_last)
-            # detector_loss's hm_t must carry the same explicit channel dim as
-            # hm_logit (B,1,H,W); dataset.py/render_heatmap store (B,H,W) (no
-            # channel axis, by convention -- see render_class_targets, which
-            # bakes its 16 channels into the array from the start instead).
-            # Unsqueezed here, at the call site, since dcc/losses.py isn't a
-            # file this actor owns -- see report.
             hms_d = hms.unsqueeze(1).to(device, non_blocking=True)
             cts_d = cts.to(device, non_blocking=True)
             nvis_d = nvis.to(device, non_blocking=True)
@@ -389,9 +279,6 @@ def run_validation(model, loader, cfg, device, tau_hm, match_px, preview_dir=Non
 
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 hm_logits, cls_logits = model(images)
-                # n_vis_batch is a scalar in detector_loss (float(n_vis_batch)
-                # in its body) -- sum the per-sample counts, don't pass the
-                # (B,) batch tensor.
                 loss = detector_loss(hm_logits, cls_logits, hms_d, cts_d, nvis_d.sum(), cfg["lambda_cls"],
                                       **loss_kwargs(cfg))
             loss_sum += float(loss) * images.shape[0]
@@ -482,7 +369,7 @@ def main():
 
     from dcc.board import n_corners
     from dcc.dataset import SynthStream, SynthVal, load_config
-    from dcc.losses import detector_loss, loss_kwargs  # noqa: F401 -- imported here so a missing dcc.losses fails fast
+    from dcc.losses import detector_loss, loss_kwargs
     from dcc.model import DetectorNet, detector_kwargs
     from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, load_retarget_ckpt, param_groups, save_ckpt, warn_cfg_drift
 
@@ -508,10 +395,6 @@ def main():
     bn_types = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
     model.train()
     if freeze:
-        # Retarget path ONLY: everything except cls.* freezes (P12). This loop
-        # must never run unconditionally -- doing so silently trains 2.1% of
-        # the network on frozen random features (caught by the docs actor
-        # 2026-07-27 after three prior gates missed it).
         for name, p in model.named_parameters():
             p.requires_grad_(name.startswith("cls."))
         for name, m in model.named_modules():
@@ -520,22 +403,9 @@ def main():
 
     retargeted_from = None
     if args.retarget_from:
-        # New-board retarget: the base checkpoint's own n_cls (hence cls.*
-        # shape) may differ from this run's -- load_retarget_ckpt excludes
-        # cls.* from the load entirely, so model's freshly-initialised class
-        # head (built at THIS run's n_cls, above) is what actually trains.
         base_ckpt = load_retarget_ckpt(args.retarget_from, model, map_location=device)
         retargeted_from = {"path": str(args.retarget_from), "board": (base_ckpt.get("cfg") or {}).get("board")}
 
-    # FINE-TUNE ENTRY (Kaelin 2026-10-08, "the absolute minimum amount of fine-tuning required" to
-    # move to a new board). cfg["finetune"] = {from, lr_mult, reinit?}: load a trained checkpoint's
-    # weights (EMA preferred -- the deployed weights) into the model, then train from step 0 on a
-    # FRESH optimizer and schedule. Distinct from --resume (continues the step counter, so a 100k
-    # checkpoint would sit on the LR floor) and from --retarget-from (drops cls.* for a different
-    # corner count). WHICH parameters train, and at what fraction of the scheduled LR, is lr_mult
-    # ({fnmatch pattern: multiplier}, see dcc.trainutil.param_groups) -- anything unmatched is
-    # frozen and its BatchNorm holds its running stats, as the freeze_trunk path does. reinit lists
-    # patterns whose weights are NOT loaded (fresh init), e.g. ["cls.*"] to test re-init vs warm start.
     ft = cfg.get("finetune")
     finetuned_from = None
     if ft:
@@ -551,10 +421,6 @@ def main():
     optim = torch.optim.AdamW(param_groups(model, tcfg["wd"], lr_mult=ft["lr_mult"] if ft else None),
                               lr=tcfg["lr"], betas=(0.9, 0.999))
     if ft:
-        # freeze_bn holds EVERY BatchNorm on its running statistics, trainable or not. Required for a
-        # checkpoint rebuilt from ONNX (dcc.onnx_import, bn_folded): its BNs are exact identities carrying
-        # the folded calibration, which batch statistics would overwrite. Also the usual choice for
-        # small-batch fine-tuning on a narrow real corpus.
         freeze_bn = bool(ft.get("freeze_bn", False) or src.get("bn_folded", False))
         for m in model.modules():
             if isinstance(m, bn_types) and (freeze_bn or not any(p.requires_grad for p in m.parameters(recurse=False))):
@@ -563,7 +429,7 @@ def main():
         print(f"[train_detector] finetune from {ft['from']} (step {finetuned_from['step']}): "
               f"{n_trainable:,} of {sum(p.numel() for p in model.parameters()):,} params trainable, "
               f"lr_mult={ft['lr_mult']}, reinit={ft.get('reinit', [])}", flush=True)
-        retargeted_from = finetuned_from   # same provenance slot in the checkpoint; dict is self-describing
+        retargeted_from = finetuned_from
 
     run_dir = Path("runs") / args.name
     logger = JsonlLogger(run_dir / "metrics.jsonl")
@@ -573,11 +439,6 @@ def main():
 
     step, resume_count, last_val = 0, 0, None
     if args.resume:
-        # freeze_trunk builds a fresh optimizer over cls params only (per
-        # spec); a checkpoint saved from a full (unfrozen) run has optim
-        # state shaped for many more params, so restoring it here would
-        # mismatch this run's param_groups -- restore_optim=False for that
-        # combination, model/ema/step/RNG still transfer as usual.
         ckpt = load_ckpt(args.resume, model, ema, optim, map_location=device, restore_optim=not freeze)
         warn_cfg_drift(ckpt, cfg, steps=tcfg["steps"])
         step, resume_count, last_val = ckpt["step"], ckpt["resume_count"] + 1, ckpt["last_val"]
@@ -586,8 +447,6 @@ def main():
     print(f"[train_detector] stream_seed={stream_seed} resume_count={resume_count} start_step={step}")
 
     if cfg.get("real"):
-        # real-frame fine-tuning (tools/video_bootstrap.py): harvested video pseudo-labels mixed into the
-        # synthetic stream at real.frac, each sample carrying the masks of what its label does not know
         from dcc.realdata import MixedStream
         train_ds = MixedStream(cfg, seed=stream_seed)
         print(f"[train_detector] real frames: {cfg['real']['records']} at frac={cfg['real'].get('frac')}")
@@ -597,12 +456,6 @@ def main():
                                multiprocessing_context="spawn", persistent_workers=True, pin_memory=True,
                                prefetch_factor=tcfg["prefetch_factor"], worker_init_fn=_worker_init)
 
-    # Matches the training micro-batch deliberately: val runs under no_grad
-    # (no backward-pass activations to retain) so this is not the binding
-    # memory constraint train_detector.py itself has, but the GPU here is
-    # shared with other concurrent processes with fluctuating usage -- a
-    # larger val batch bought no required functionality (unpinned choice)
-    # and cost a real OOM mid-smoke-test the one time headroom was tight.
     val_batch = tcfg["batch"]
     val_ds = SynthVal(cfg, n=tcfg["val_subset"], seed=cfg["synth"]["val_seed"])
     val_loader = DataLoader(val_ds, batch_size=val_batch, num_workers=8, multiprocessing_context="spawn",
@@ -618,16 +471,15 @@ def main():
     train_iter = iter(train_loader)
     optim.zero_grad(set_to_none=True)
     micro, accum_loss, n_samples = 0, 0.0, 0
-    t0, val_time = time.time(), 0.0  # val_time excluded from samples/s below -- see report
+    t0, val_time = time.time(), 0.0
 
     while step < total_steps:
         batch = next(train_iter)
         images = batch["image"].to(device, non_blocking=True, memory_format=torch.channels_last)
-        hms = batch["heatmap"].unsqueeze(1).to(device, non_blocking=True)  # (B,H,W)->(B,1,H,W), see run_validation
+        hms = batch["heatmap"].unsqueeze(1).to(device, non_blocking=True)
         cts = batch["classes"].to(device, non_blocking=True)
         nvis = batch["n_vis"].to(device, non_blocking=True)
         n_samples += images.shape[0]
-        # masks exist only on the real-frame stream (dcc.realdata); absent = every element trained
         hm_mask = batch["hm_mask"].unsqueeze(1).to(device, non_blocking=True).float() if "hm_mask" in batch else None
         cls_mask = batch["cls_mask"].to(device, non_blocking=True).float() if "cls_mask" in batch else None
 
@@ -651,10 +503,6 @@ def main():
         ema.update(model)
 
         avg_loss = accum_loss / accum
-        # samples/s excludes val_time throughout -- otherwise every step's
-        # throughput after the first validation is diluted by however long
-        # that (and every prior) validation call took, since elapsed keeps
-        # growing from t0 but n_samples only counts training samples.
         elapsed = time.time() - t0 - val_time
         step += 1
         micro, accum_loss = 0, 0.0
@@ -680,13 +528,6 @@ def main():
             last_val = result
             val_time += time.time() - v0
 
-        # Rolling resume point, overwritten in place (2026-07-28): the
-        # milestone checkpoints below stay one unique file per
-        # full_val_every (25k), but they alone left a 25k-step exposure
-        # window -- a DataLoader worker died at step 164,670 and cost 14.7k
-        # steps of real training, since the last milestone was 150k. This is
-        # deliberately NOT tied to the val cadence: it is crash insurance,
-        # not a measurement, and it costs 75 MB total rather than per write.
         if step % tcfg.get("ckpt_rolling_every", 1000) == 0:
             save_ckpt(run_dir / "ckpt_latest.pt", step, resume_count, model, ema, optim, cfg,
                       last_val, retargeted_from=retargeted_from)
@@ -710,9 +551,6 @@ def main():
 
             full_val_history.append({"step": step, **full_result})
             if early_stop_should_trigger(full_val_history, step, es_cfg):
-                # An exit, not a state: nothing here (or in save_ckpt above) marks the
-                # checkpoint or cfg as early-stopped, so a later --resume from ckpt_path
-                # just continues the ordinary loop past this step, unaware it happened.
                 window = full_val_history[-es_cfg["patience"]:]
                 early_stop_record = {"window_steps": [h["step"] for h in window],
                                       "window": [{"step": h["step"], "m01": h["m01"], "m02": h["m02"],
@@ -727,7 +565,6 @@ def main():
     elapsed = time.time() - t0 - val_time
     print(f"[train_detector] done: step={step} train_elapsed={elapsed:.1f}s val_elapsed={val_time:.1f}s "
           f"samples/s={n_samples / elapsed if elapsed > 0 else 0.0:.2f}")
-    # One record of what the run cost, so a summary tool never has to reconstruct it from the stream.
     logger.log(step=step, done={"train_elapsed_s": elapsed, "val_elapsed_s": val_time,
                                 "wall_elapsed_s": time.time() - t0,
                                 "samples_per_s": n_samples / elapsed if elapsed > 0 else 0.0,

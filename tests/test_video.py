@@ -1,5 +1,6 @@
-"""Video self-supervision: harvest geometry (dcc.video), real-frame targets and masks (dcc.realdata),
-the masked loss (dcc.losses), and ONNX import (dcc.onnx_import). CPU only, no corpus needed."""
+"""Video self-supervision: harvest geometry, visibility, masks, masked loss, mixed stream, ONNX import.
+    PYTHONPATH= python -m pytest tests/test_video.py -q
+"""
 import json
 
 import cv2
@@ -18,7 +19,6 @@ LAT = canon_lattice(4)
 
 
 def _H(s=40.0, theta=0.3, tx=320.0, ty=240.0, persp=(2e-4, -1e-4)):
-    """canonical -> 640x480 image homography of a board roughly centred at (tx, ty)."""
     c, sn = np.cos(theta), np.sin(theta)
     A = np.array([[s * c, -s * sn, tx - s * 2.5 * (c - sn)], [s * sn, s * c, ty - s * 2.5 * (sn + c)], [0, 0, 1.0]])
     P = np.array([[1, 0, 0], [0, 1, 0], [persp[0], persp[1], 1.0]])
@@ -26,7 +26,6 @@ def _H(s=40.0, theta=0.3, tx=320.0, ty=240.0, persp=(2e-4, -1e-4)):
 
 
 def _frame(H, bg=100.0, gain=1.0, noise=0.0, rng=None):
-    """Render the board through a canonical -> image homography H into a 640x480 frame."""
     img, _ = render_board(480)
     board = 30 + 180 * img.astype(np.float32) / 255.0
     Ar = np.array([[96.0, 0, -0.5], [0, 96.0, -0.5], [0, 0, 1.0]])
@@ -40,11 +39,11 @@ def _frame(H, bg=100.0, gain=1.0, noise=0.0, rng=None):
 
 
 def test_degenerate_sets():
-    assert V.degenerate(LAT[[0, 1, 2, 5]])              # three on row 0: lattice_gate accepts this as 'vacuous'
-    assert V.degenerate(LAT[[0, 1, 2, 3, 6]])           # four of five on one line
-    assert V.degenerate(LAT[[0, 1, 2]])                 # too few
+    assert V.degenerate(LAT[[0, 1, 2, 5]])
+    assert V.degenerate(LAT[[0, 1, 2, 3, 6]])
+    assert V.degenerate(LAT[[0, 1, 2]])
     assert not V.degenerate(LAT[[0, 3, 12, 15]])
-    assert not V.degenerate(LAT[[0, 1, 2, 3, 4, 8]])    # 6 points never degenerate on a 4x4 lattice
+    assert not V.degenerate(LAT[[0, 1, 2, 3, 4, 8]])
 
 
 def test_fit_rejects_wrong_id_and_reports_spread():
@@ -53,13 +52,12 @@ def test_fit_rejects_wrong_id_and_reports_spread():
     idx = np.arange(16)
     xy = V.project(H, LAT) + rng.normal(0, 0.05, (16, 2))
     idx_bad = idx.copy()
-    idx_bad[5] = 10                                    # corner 5's position read as ID 10
+    idx_bad[5] = 10
     keep = idx_bad != 10
-    keep[5] = True                                     # the true 10 is absent, the impostor present
+    keep[5] = True
     fit = V.fit_lattice(idx_bad[keep], xy[keep], 4)
-    assert fit is not None and 10 not in fit.inliers   # the impostor is an outlier at m >= 8
+    assert fit is not None and 10 not in fit.inliers
     assert np.abs(V.project(fit.H, LAT) - V.project(H, LAT)).max() < 0.3
-    # spread, not count, decides the label error: 8 clustered corners predict a larger worst sigma
     spread = V.fit_lattice(np.array([0, 3, 12, 15, 5, 6, 9, 10]), xy[[0, 3, 12, 15, 5, 6, 9, 10]], 4)
     clustered = V.fit_lattice(np.array([0, 1, 2, 4, 5, 6, 8, 9]), xy[[0, 1, 2, 4, 5, 6, 8, 9]], 4)
     assert clustered.sigma.max() > spread.sigma.max()
@@ -74,7 +72,7 @@ def test_ecc_tracking_follows_without_drift():
     assert sorted(out) == list(range(1, 20))
     errs = [V.corner_disagreement(out[t][0], Hs[t], 4, frames[t].shape) for t in out]
     assert max(errs) < 0.3, errs
-    assert errs[-1] < 0.3                              # aligned to the board model each frame: no drift
+    assert errs[-1] < 0.3
 
 
 def test_visibility_flags_occlusion_not_darkness():
@@ -84,14 +82,14 @@ def test_visibility_flags_occlusion_not_darkness():
     bright = _frame(H, noise=1.0, rng=rng)
     pts = V.project(H, LAT)
     occluded = bright.copy()
-    for k in (5, 10):                                  # paste unrelated texture over two junctions
+    for k in (5, 10):
         x, y = np.rint(pts[k]).astype(int)
         occluded[y - 10:y + 11, x - 10:x + 11] = rng.integers(0, 255, (21, 21))
     _, obs = V.corner_visibility(occluded, H, tmpl, 4)
     assert not obs[5] and not obs[10] and obs[[0, 3, 12, 15]].all()
-    dark = _frame(H, gain=0.02, noise=1.2, rng=rng)    # contrast ~3.6 DN in ~1.2 DN noise
+    dark = _frame(H, gain=0.02, noise=1.2, rng=rng)
     _, obs = V.corner_visibility(dark, H, tmpl, 4)
-    assert obs.mean() > 0.8                            # dark is not occluded
+    assert obs.mean() > 0.8
 
 
 def test_real_targets_and_masks():
@@ -104,26 +102,24 @@ def test_real_targets_and_masks():
     t = render_real_targets(cfg, image, corners)
     hm, m, cm = t["heatmap"].numpy(), t["hm_mask"].numpy(), t["cls_mask"].numpy()
     assert t["n_vis"] == 2 and hm[100, 100] == 1.0 and hm[150, 200] == 1.0
-    assert m[100, 99] == 1 and m[100, 101] == 1         # tight label: strict one-hot, neighbours trained
-    assert m[150, 200] == 1 and m[149, 199] == 0 and m[151, 201] == 0   # uncertain: ring ignored, centre kept
-    assert m[200, 300] == 0 and m[200, 303] == 0 and m[200, 310] == 1   # unknown: disc ignored
+    assert m[100, 99] == 1 and m[100, 101] == 1
+    assert m[150, 200] == 1 and m[149, 199] == 0 and m[151, 201] == 0
+    assert m[200, 300] == 0 and m[200, 303] == 0 and m[200, 310] == 1
     cx, cy = int((300 + 0.5) / 4), int((200 + 0.5) / 4)
-    assert cm[2, cy, cx] == 0 and cm[0, cy, cx] == 1 and cm[1, cy, cx] == 1   # only its own channel
+    assert cm[2, cy, cx] == 0 and cm[0, cy, cx] == 1 and cm[1, cy, cx] == 1
 
 
 def test_noise_model_and_darkening_reproduce_a_dark_frame():
-    """The clip's noise curve is recovered from its own frames, and a bright frame darkened to gain g
-    carries the noise the clip would have had at that level."""
     from dcc.realdata import darken
     rng = np.random.default_rng(4)
-    shot, read_var = 0.05, 0.3                         # DN^2 per DN, DN^2
+    shot, read_var = 0.05, 0.3
     clean = [cv2.GaussianBlur(rng.uniform(lv * 0.5, lv * 1.5, (240, 320)), (0, 0), 6) for lv in (4, 10, 40, 80, 150)]
     frames = [np.clip(np.rint(c + rng.normal(0, 1, c.shape) * np.sqrt(shot * c + read_var)), 0, 255).astype(np.uint8)
               for c in clean]
     nm = V.noise_model(frames)
     assert abs(nm["shot"] - shot) < 0.02 and abs(nm["read_var"] - read_var) < 0.15
     g = 0.05
-    out = darken(frames[3], rng, nm, gain_min=g * 0.999)        # gain_min ~= g: draws g almost surely
+    out = darken(frames[3], rng, nm, gain_min=g * 0.999)
     sigma, level = V.frame_noise(out)
     expect = np.sqrt(nm["shot"] * level + nm["read_var"])
     assert abs(sigma - expect) / expect < 0.25, (sigma, expect)
@@ -144,7 +140,6 @@ def test_masked_loss_is_backward_compatible():
 
 @pytest.fixture()
 def tiny_world(tmp_path):
-    """A 160x120 world: three noise backgrounds and a two-frame harvest directory."""
     rng = np.random.default_rng(3)
     bgd = tmp_path / "bg"
     bgd.mkdir()
@@ -189,7 +184,7 @@ def test_onnx_import_round_trip(tmp_path):
            "board": None}
     torch.manual_seed(0)
     model = DetectorNet(240, 320, attend_div=8, width_mult=0.25, e4_dilated=False, xsa=True).eval()
-    for m in model.modules():                          # non-trivial BN statistics, so folding is exercised
+    for m in model.modules():
         if isinstance(m, torch.nn.BatchNorm2d):
             m.running_mean.uniform_(-0.2, 0.2)
             m.running_var.uniform_(0.5, 2.0)
@@ -204,6 +199,6 @@ def test_onnx_import_round_trip(tmp_path):
                       input_names=["input"], output_names=["logits"])
     _, rdiff = refiner_from_onnx(rpath)
     assert rdiff < 1e-3
-    bad = {**cfg, "xsa": False}                        # shape-invisible: only the parity check can see it
+    bad = {**cfg, "xsa": False}
     with pytest.raises(ValueError):
         detector_from_onnx(path, bad)

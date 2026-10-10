@@ -1,3 +1,5 @@
+"""Stage-3 inference functions and the detect() contract.  PYTHONPATH= python -m pytest tests/test_pipeline.py -q
+"""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -16,11 +18,6 @@ CANON = np.array([[(i % 4) + 1.0, (i // 4) + 1.0] for i in range(16)], dtype=np.
 
 
 def _build_pose(rng, tilt_deg, s=60.0, W=1600, H=1200, phi=None, psi=None):
-    """gen_eval_pose-style K@[r1|r2|t] synthetic pose (independent of
-    tools/gen_eval_pose.py, not imported): in-plane angle phi and tilt axis
-    psi (random unless pinned by the caller), tilt about that axis, apparent
-    scale s at the board centre. Returns (K, R, t, img_pts) for the 16
-    canonical corners."""
     cx, cy = (W - 1) / 2, (H - 1) / 2
     f = 1.0 * W
     K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1.0]])
@@ -37,16 +34,8 @@ def _build_pose(rng, tilt_deg, s=60.0, W=1600, H=1200, phi=None, psi=None):
     return K, R, t, img_pts
 
 
-# ---------------------------------------------------------------- readout --
-
 def test_readout_convention():
-    """The decisive test: read_ids at the exact rendered corner xy must
-    recover the rendered index always, with confidence >= the analytic
-    worst case (bilinear split 4 ways at a shared cell corner, sigma=1
-    cell -- measures ~0.83, well above the 0.24 floor asserted here) and
-    ~1.0 at cell-centre phase. align_corners=True is independently checked
-    wrong on a crafted case to lock the convention."""
-    W, H = 256, 256  # 64x64 cells at H/4
+    W, H = 256, 256
     rng = np.random.default_rng(0)
     worst_conf = 1.0
     for _ in range(200):
@@ -59,7 +48,6 @@ def test_readout_convention():
     assert worst_conf >= 0.24, f"worst confidence {worst_conf} below analytic floor"
     print("test_readout_convention random-phase worst conf:", worst_conf)
 
-    # deterministic worst-case phase: corner at a shared 4-cell boundary
     j = 20
     xw = yw = 4 * j - 0.5
     ctw = render_class_targets(np.array([[xw, yw]]), np.array([True]), np.array([9]), (W, H), sigma=1.0)
@@ -67,7 +55,6 @@ def test_readout_convention():
     assert idx_w[0] == 9 and conf_w[0] >= 0.24
     print("test_readout_convention analytic worst-phase conf:", float(conf_w[0]))
 
-    # cell-centre phase: confidence must read back essentially exactly 1.0
     xc = yc = 4 * j + 1.5
     ctc = render_class_targets(np.array([[xc, yc]]), np.array([True]), np.array([4]), (W, H), sigma=1.0)
     idx_c, conf_c = read_ids(ctc, np.array([[xc, yc]]))
@@ -75,10 +62,6 @@ def test_readout_convention():
     assert conf_c[0] >= 0.95
     assert abs(conf_c[0] - 1.0) < 1e-5
 
-    # align_corners=True locks WRONG: two corners (channels 3, 7) near the
-    # map edge where the align_corners conventions diverge most; queried at
-    # a point strictly closer to corner 3, the correct (align_corners=False)
-    # convention picks channel 3, the wrong one picks channel 7.
     pts = np.array([[1.5, 1.5], [5.5, 1.5]])
     ct2 = render_class_targets(pts, np.array([True, True]), np.array([3, 7]), (64, 64), sigma=1.0)
     query = np.array([[2.25, 1.5]])
@@ -96,18 +79,12 @@ def test_readout_convention():
     assert idx_wrong != 3, "align_corners=True should diverge from the pinned convention here"
 
 
-# ------------------------------------------------------------ peaks/merge --
-
 def test_peaks_and_merge():
-    """Two isolated Gaussians (well-separated) + one exact 2-px plateau tie.
-    peaks() must find all 4 raw local maxima (both plateau pixels pass the
-    3x3 equality test); merge_close collapses the tie to one; top_k caps in
-    descending-score order."""
     hm = np.zeros((40, 40), dtype=np.float32)
-    hm[10, 10] = 0.9   # bump1, (x,y)=(10,10)
-    hm[30, 30] = 0.6   # bump2, (x,y)=(30,30)
-    hm[15, 20] = 0.8   # plateau tie, (x,y)=(20,15)
-    hm[15, 21] = 0.8   # plateau tie, (x,y)=(21,15)
+    hm[10, 10] = 0.9
+    hm[30, 30] = 0.6
+    hm[15, 20] = 0.8
+    hm[15, 21] = 0.8
 
     xy, sc = peaks(hm, tau_hm=0.3, top_k=64)
     assert len(xy) == 4
@@ -130,13 +107,7 @@ def test_peaks_and_merge():
     assert (30, 30) not in {tuple(p) for p in xy_k.tolist()}, "top_k must drop the lowest score"
 
 
-# ------------------------------------------------------------- cut_crops --
-
 def test_border_bypass():
-    """A peak whose 24x24 sensor crop would cross the frame border is
-    excluded (never reflect-padded); one that exactly touches (12 px
-    margin) is kept. Checked at r=1 and r=2.5 against an independently
-    recomputed half-pixel map, and crop content verified byte-for-byte."""
     def input_for_centre(c, r):
         return (c + 0.5) * r - 0.5
 
@@ -144,7 +115,7 @@ def test_border_bypass():
     frame = rng.integers(0, 256, size=(200, 200), dtype=np.uint8)
     for r in (1.0, 2.5):
         x5, x12 = input_for_centre(5, r), input_for_centre(12, r)
-        mid = input_for_centre(100, r)  # input coord that maps to sensor centre 100, any r
+        mid = input_for_centre(100, r)
         peaks_input = np.array([[x5, mid], [x12, mid], [mid, x5], [mid, x12]])
         crops, centres, kept_mask, extents = cut_crops(frame, peaks_input, r)
         assert list(extents) == [24, 24], "default extent must stay the fixed 24 px crop"
@@ -157,18 +128,7 @@ def test_border_bypass():
             assert cx - 12 >= 0 and cx + 12 <= 200 and cy - 12 >= 0 and cy + 12 <= 200
 
 
-# ------------------------------------------------------------ soft_argmax --
-
 def test_soft_argmax():
-    """render_refiner_target(d) (real sigma=1.5, forced-peak pixel) recovers
-    u* within 0.35; a manually-built, narrower Gaussian (sigma=0.5, so the
-    5x5 readout window captures effectively all its mass) recovers u* within
-    0.05 and locks the u=x/col, v=y/row orientation. d is sampled from
-    [-3.5, 3.5], staying inside render_refiner_target's +/-3.9375 support --
-    the outer ~0.4 px sliver is excluded because there the analytic Gaussian
-    itself is truncated by the 64x64 canvas edge, a distinct and
-    already-understood degeneracy from the window-vs-sigma truncation this
-    test targets."""
     rng = np.random.default_rng(1)
     worst_forced = 0.0
     for _ in range(100):
@@ -183,7 +143,7 @@ def test_soft_argmax():
     worst_manual = 0.0
     for _ in range(100):
         dx, dy = rng.uniform(-3.5, 3.5), rng.uniform(-3.5, 3.5)
-        centre = (100.0, 200.0)  # arbitrary integer sensor centre
+        centre = (100.0, 200.0)
         u_star, v_star = 31.5 + 8 * dx, 31.5 + 8 * dy
         g = np.exp(-((xs - u_star) ** 2 + (ys - v_star) ** 2) / (2 * 0.5 ** 2)).astype(np.float32)
         u = soft_argmax(g.reshape(1, 1, 64, 64))[0]
@@ -194,8 +154,6 @@ def test_soft_argmax():
     print("test_soft_argmax clean-gaussian worst err:", worst_manual)
 
 
-# -------------------------------------------------------------- undistort --
-
 def test_undistort_identity():
     xy = np.array([[100.0, 150.0], [320.0, 240.0], [500.0, 10.0]])
     K = np.array([[550.0, 0, 320.0], [0, 550.0, 240.0], [0, 0, 1.0]])
@@ -204,13 +162,10 @@ def test_undistort_identity():
     assert undistort(np.zeros((0, 2)), K, None).shape == (0, 2)
 
 
-# ---------------------------------------------------------- lattice_gate --
-
 def test_lattice_gate():
     rng = np.random.default_rng(7)
     _, _, _, img_pts = _build_pose(rng, tilt_deg=30.0)
 
-    # 12 ID'd, 2 deliberately wrong -> demotes exactly those 2
     idx = np.arange(12)
     idx_wrong = idx.copy()
     idx_wrong[3], idx_wrong[7] = 14, 15
@@ -219,24 +174,20 @@ def test_lattice_gate():
     assert np.nonzero(demoted_mask)[0].tolist() == [3, 7]
     assert inlier_mask.sum() == 10
 
-    # exactly 4, non-collinear -> vacuous, H still a valid exact fit
-    idx4 = np.array([0, 1, 4, 5])  # canonical (1,1)(2,1)(1,2)(2,2): a 2x2 block
+    idx4 = np.array([0, 1, 4, 5])
     H4, inlier4, demoted4, deg4 = lattice_gate(img_pts[idx4], idx4, np.ones(4), tol=3.0)
     assert deg4 == "vacuous" and H4 is not None and inlier4.all() and not demoted4.any()
     reproj = np.hstack([CANON[idx4], np.ones((4, 1))]) @ H4.T
     reproj = reproj[:, :2] / reproj[:, 2:3]
     assert np.abs(reproj - img_pts[idx4]).max() < 1e-3
 
-    # 4 collinear (one lattice row: indices 0..3 all have canonical row=1)
     idx_row = np.array([0, 1, 2, 3])
     Hc, _, _, degc = lattice_gate(img_pts[idx_row], idx_row, np.ones(4), tol=3.0)
     assert degc == "collinear" and Hc is None
 
-    # fewer than 4 ID'd
     Ht, _, _, degt = lattice_gate(img_pts[:3], np.array([0, 1, 2]), np.ones(3), tol=3.0)
     assert degt == "too_few" and Ht is None
 
-    # recovery: all 16 correct, drop 5 IDs, recover() reassigns all 5
     idx16 = np.arange(16)
     drop = [2, 5, 9, 11, 14]
     idx_dropped = idx16.copy()
@@ -246,10 +197,8 @@ def test_lattice_gate():
     idx_rec, recovered_mask, corroborated = recover(Hg, img_pts, idx_dropped, np.ones(16), tol=3.0)
     assert np.nonzero(recovered_mask)[0].tolist() == drop
     assert idx_rec[drop].tolist() == drop
-    assert corroborated is False  # 11 ID'd feeding H, not the vacuous 4-point case
+    assert corroborated is False
 
-    # corroboration: a vacuous (4-ID) fit that DOES recover extra points is
-    # corroborated; one with no other detections to recover is not.
     idx_full_from_4 = np.full(16, -1)
     idx_full_from_4[idx4] = idx4
     _, _, corrob_yes = recover(H4, img_pts, idx_full_from_4, np.ones(16), tol=3.0)
@@ -257,17 +206,13 @@ def test_lattice_gate():
     _, _, corrob_no = recover(H4, img_pts[idx4], idx4, np.ones(4), tol=3.0)
     assert corrob_no is False
 
-    # regression: two different ID-less detections both within tol of the
-    # SAME projected canonical corner must not both claim it
     Hs = np.diag([100.0, 100.0, 1.0])
-    c5 = np.array([2.0, 2.0]) * 100  # canonical index 5's projection under Hs
+    c5 = np.array([2.0, 2.0]) * 100
     xy_dup = np.array([c5 + [1, 1], c5 + [-1, -1]])
     idx_dup, recovered_dup, _ = recover(Hs, xy_dup, np.array([-1, -1]), np.ones(2), tol=3.0)
     assert not (idx_dup[0] == 5 and idx_dup[1] == 5), "duplicate recovered index"
     assert recovered_dup.sum() == 1
 
-
-# ------------------------------------------------------------------- pnp --
 
 def test_pnp_ippe():
     rng = np.random.default_rng(11)
@@ -280,31 +225,16 @@ def test_pnp_ippe():
     assert ang < 0.5, f"rotation error {ang} deg"
     assert np.linalg.norm(tvec.ravel() - t) < 0.01 * np.linalg.norm(t)
 
-    # Near-fronto-parallel -> genuinely ambiguous. At exact noiseless
-    # fronto-parallel (tilt=0) IPPE's two solutions coincide to numerical
-    # precision (verified: rvecs agree to ~4e-8) -- the textbook two-fold
-    # degeneracy; realistic detector noise (0.15 px, comparable to the
-    # refiner's own sub-pixel error) is what makes both reprojection errors
-    # nonzero and comparable, so ambiguous depends on the noise draw, not on
-    # phi/psi.
-    # tilt=2 deg does NOT reproduce this robustly (checked empirically: the
-    # deterministic ~0.18 px separation from tilt alone competes with the
-    # noise, ambiguous only ~50% of random draws) -- tilt=0 with a fixed
-    # noise seed is the correct, reproducible way to hit this branch.
     K2, R2, t2, img_pts2 = _build_pose(rng, tilt_deg=0.0, phi=0.3, psi=0.7, s=60.0)
     noisy = img_pts2 + np.random.default_rng(2).normal(0, 0.15, img_pts2.shape)
     _, _, _, ambiguous2, _, reason2, _ = pnp(noisy, idx, K2, square_length_m=1.0)
     assert reason2 is None and ambiguous2 is True
 
-    # too few correspondences
     rvec3, tvec3, rms3, amb3, n3, reason3, _ = pnp(img_pts[:3], np.array([0, 1, 2]), K, 1.0)
     assert rvec3 is None and tvec3 is None and reason3 is not None and n3 == 3
 
 
 def test_pnp_empty_solver_result(monkeypatch):
-    """OpenCV's solvepnp.cpp wraps IPPE in a bare catch(...): internal solver
-    failures are silently swallowed and ZERO solutions returned. That
-    reachable outcome must be a defined no-pose, never an IndexError."""
     rng = np.random.default_rng(11)
     K, R, t, img_pts = _build_pose(rng, tilt_deg=30.0, s=60.0)
     monkeypatch.setattr(cv2, "solvePnPGeneric", lambda *a, **k: (0, [], [], np.zeros((0, 1))))
@@ -312,8 +242,6 @@ def test_pnp_empty_solver_result(monkeypatch):
     assert rvec is None and tvec is None and rms is None
     assert ambiguous is False and n_used == 16 and reason == "pnp_solver_failed"
 
-
-# --------------------------------------------------------------- detect() --
 
 def test_detect_contract_untrained():
     pytest.importorskip("dcc.model")
@@ -330,7 +258,7 @@ def test_detect_contract_untrained():
     out = detect(frame, model, refiner, K=None, dist=None, cfg=cfg)
     for key in ("rvec", "tvec", "rms", "reason", "corners", "ambiguous", "demoted", "recovered"):
         assert key in out
-    assert out["reason"] is not None or out["rvec"] is not None  # a legal outcome either way
+    assert out["reason"] is not None or out["rvec"] is not None
     assert isinstance(out["corners"], list)
     for c in out["corners"]:
         assert set(c) == {"x", "y", "index", "source", "p_hm", "p_id"}

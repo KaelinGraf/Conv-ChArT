@@ -1,30 +1,8 @@
-"""tools/video_bootstrap.py -- self-supervised fine-tuning from ordinary video of the board.
-
-The loop (each round re-harvests with the latest model and fine-tunes from the BASE weights again,
-so an early round's mistakes fall back out instead of compounding):
-
-  harvest   run the deployed pipeline on every frame; frames whose identified corners fit the lattice
-            become ANCHORS and are labelled by the fit (not by the detections); frames between anchors
-            are labelled by TRACKING the board -- each frame's homography measured by aligning the
-            board's known picture to that frame (dcc.video). Labels carry three states: positive,
-            off-frame, and unknown (no gradient: dcc.losses mask=).
-  train     tools/train_detector.py's finetune: entry with a real: block -- harvested frames mixed into
-            the synthetic stream at real.frac, BatchNorm held on its statistics.
-  eval      held-out clips, never trained on: identified-corner recall and ID precision against a
-            reference (ground truth for synthetic clips, a base-model harvest otherwise), and the
-            fraction of frames that fit, by brightness. Synthetic validation runs inside train_detector
-            and must not regress (the other side of the gate).
-
-Subcommands:
-  import-onnx      deployed .onnx -> trainer .pt (needs --config for a detector; verified vs onnxruntime)
-  make-clip        a synthetic test clip with ground truth (moving board, a dark stretch, an occluder)
-  harvest          video(s) -> <out>/<clip>/{images.npy, records.json} + overlay sheet + manifest.json
-  finetune-config  write a train_detector config for one round
-  eval             score detectors on a clip
-  rounds           harvest -> fine-tune -> eval, N times
-
-Run as a script from the repo root (never `python -m tools...`, see README):
-  PYTHONPATH= python tools/video_bootstrap.py <subcommand> --help
+"""Self-supervised fine-tuning from video of the board.
+    PYTHONPATH= python tools/video_bootstrap.py rounds --config C --base DET.onnx|.pt --refiner REF.onnx|.pt \
+        --train-video V [V ...] --heldout-video V [V ...] --backgrounds IMAGE_DIR --workdir W --rounds 2
+Subcommands: import-onnx, make-clip (synthetic test clip with ground truth), harvest, finetune-config,
+eval, rounds; each takes --help. Videos may be files or image directories.
 """
 import argparse
 import json
@@ -126,8 +104,6 @@ def _ft_args(s):
     s.add_argument("--lr-mult", nargs="*", default=["*=1.0"], help="fnmatch=mult, see trainutil.param_groups")
 
 
-# ---------------------------------------------------------------------------------------------
-
 def _device(arg):
     import torch
     return arg or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -167,10 +143,6 @@ def cmd_import_onnx(a):
     print(f"[import-onnx] {a.onnx} -> {a.out}: {sum(p.numel() for p in model.parameters()):,} params, "
           f"max |torch - onnxruntime| = {diff:.2e}")
 
-
-# ---------------------------------------------------------------------------------------------
-# make-clip: a synthetic clip with ground truth, for testing the loop end to end
-# ---------------------------------------------------------------------------------------------
 
 def _procedural_bg(rng, w, h):
     import cv2
@@ -221,13 +193,12 @@ def cmd_make_clip(a):
     A = np.array([[SQ, 0, -0.5], [0, SQ, -0.5], [0, 0, 1.0]])
     ph = rng.uniform(0, 2 * np.pi, 8)
     u = np.arange(T) / max(T - 1, 1)
-    s = 115 * np.exp(0.75 * np.sin(2 * np.pi * 0.9 * u + ph[0]))               # sensor px per square: ~55-245
+    s = 115 * np.exp(0.75 * np.sin(2 * np.pi * 0.9 * u + ph[0]))
     theta = 0.4 * np.sin(2 * np.pi * 0.7 * u + ph[1]) + ph[2]
     tilt = np.clip(np.radians(25 + 22 * np.sin(2 * np.pi * 1.1 * u + ph[3])), 0, np.radians(55))
     psi = ph[4] + 0.6 * np.sin(2 * np.pi * 0.5 * u + ph[5])
     tx = 0.18 * W * np.sin(2 * np.pi * 0.6 * u + ph[6])
     ty = 0.15 * H * np.sin(2 * np.pi * 0.8 * u + ph[7])
-    # exposure: bright, fade to `dark`, hold, recover -- the regime a real night-time approach visits
     gain = np.ones(T)
     f0, f1, f2, f3 = (int(T * q) for q in (0.25, 0.42, 0.62, 0.8))
     gain[f0:f1] = np.exp(np.linspace(0, np.log(a.dark), f1 - f0))
@@ -250,7 +221,7 @@ def cmd_make_clip(a):
         frame = bg * (1 - mask) + warped * mask
         corners = project_pts(Ht @ A, lat)
         vis = (corners[:, 0] >= -0.5) & (corners[:, 0] < W - 0.5) & (corners[:, 1] >= -0.5) & (corners[:, 1] < H - 0.5)
-        if occ_on and o0 <= t < o1:                  # an object sweeps across the board
+        if occ_on and o0 <= t < o1:
             cen = corners.mean(axis=0)
             q = (t - o0) / max(o1 - o0 - 1, 1)
             ox = cen[0] + (q - 0.5) * 3.0 * s[t]
@@ -262,11 +233,11 @@ def cmd_make_clip(a):
             inside = (((corners[:, 0] - ox) / (ax + 2)) ** 2 + ((corners[:, 1] - oy) / (ay + 2)) ** 2) <= 1.0
             vis &= ~inside
         cen = corners.mean(axis=0)
-        if prev_c is not None:                       # motion blur along the image motion, half-frame shutter
+        if prev_c is not None:
             frame = _motion_blur(frame, (cen - prev_c) * 0.5)
         prev_c = cen
         frame = frame * gain[t]
-        Kc, read = 6.0, 1.2                          # e-/DN, read noise DN
+        Kc, read = 6.0, 1.2
         frame = rng.poisson(np.maximum(frame, 0) * Kc) / Kc + rng.normal(0, read, frame.shape)
         frame = np.clip(np.rint(frame), 0, 255).astype(np.uint8)
         cv2.imwrite(str(out / "frames" / f"{t:06d}.png"), frame)
@@ -282,10 +253,6 @@ def cmd_make_clip(a):
 
 
 def _motion_blur(frame, v, max_len=30.0):
-    """Linear motion blur of extent v (px), CENTRED: the kernel is sampled symmetrically about its own
-    centre with bilinear splats, so the blurred corner's centroid stays on its ground-truth position.
-    (A cv2.line kernel with integer endpoints is off-centre by up to half a pixel per axis, which
-    showed up as a 0.5-0.8 px bias against ground truth on every blurred frame.)"""
     import cv2
     import numpy as np
     v = np.asarray(v, dtype=np.float64)
@@ -313,13 +280,8 @@ def project_pts(H, pts):
     return p[:, :2] / p[:, 2:3]
 
 
-# ---------------------------------------------------------------------------------------------
-# harvest
-# ---------------------------------------------------------------------------------------------
-
 def harvest(videos, det, ref, cfg, out, camera=(None, None), step=1, max_frames=None, stride=1, cap=0,
             sheet=24, gts=None, hp=None, log=print):
-    """Harvest each video; returns {clip: stats}. Labels never come from the detections themselves."""
     import cv2
     import numpy as np
     from dcc import video as V
@@ -391,8 +353,6 @@ def _read_gt(path):
 
 
 def label_accuracy(records, gt_path, r, src_idx):
-    """Harvested labels vs make-clip ground truth (sensor px -> input px): position error of positives,
-    and how often a 'positive' is actually occluded or out of frame (hallucination rate)."""
     import numpy as np
     from dcc.video import sensor_to_input
     gt = _read_gt(gt_path)
@@ -431,10 +391,6 @@ def cmd_harvest(a):
             stride=a.stride, cap=a.cap, sheet=a.sheet, gts=a.gt)
 
 
-# ---------------------------------------------------------------------------------------------
-# fine-tune config
-# ---------------------------------------------------------------------------------------------
-
 def finetune_config(base_cfg, src, records, a):
     import copy
     cfg = copy.deepcopy(base_cfg)
@@ -468,14 +424,8 @@ def cmd_finetune_config(a):
     print(f"[finetune-config] {a.out}: {a.steps} steps at lr {a.lr}, real.frac {a.real_frac}, from {a.src}")
 
 
-# ---------------------------------------------------------------------------------------------
-# eval
-# ---------------------------------------------------------------------------------------------
-
 def evaluate(src, det, ref, cfg, gt_path=None, labels_dir=None, camera=(None, None), bins=(0.02, 0.15),
              return_rows=False):
-    """Per-frame identified corners vs a reference, grouped by brightness. With ground truth the groups
-    are by exposure gain; with a harvest reference, by the board's median level in the frame."""
     import numpy as np
     from dcc import video as V
     from dcc.board import n_corners
@@ -565,15 +515,7 @@ def print_eval(name, rep):
               f"fit_rate {m['fit_rate']}  err_median {m['err_median_px']} px")
 
 
-# ---------------------------------------------------------------------------------------------
-# rounds
-# ---------------------------------------------------------------------------------------------
-
 def synth_val(det, cfg, n):
-    """The OTHER side of the gate: synthetic validation (M-01/M-02/M-04) through train_detector's own
-    run_validation, so base and fine-tuned models are scored by one implementation on one set. Loaded by
-    file path, never `import tools.*` (README: the machine-wide tools-package shadow). Single-process
-    loader: a collate_fn from a path-loaded module cannot be unpickled by spawn workers."""
     import importlib.util
     from functools import partial
 
@@ -601,7 +543,7 @@ def cmd_rounds(a):
     base_cfg = _load_cfg(a.config)
     dev = _device(None)
     base = Path(a.base)
-    if base.suffix == ".onnx":                          # fine-tuning needs trainer weights
+    if base.suffix == ".onnx":
         model, diff = detector_from_onnx(base, base_cfg)
         base = wd / "base.pt"
         torch.save(ckpt_from_onnx(a.base, model, base_cfg, diff), base)
@@ -615,7 +557,7 @@ def cmd_rounds(a):
         log.flush()
 
     summary = {"base": {}, "synth_val": {}}
-    vcfg = finetune_config(base_cfg, base, [], a)     # the run's own synthetic set: same backgrounds, same size
+    vcfg = finetune_config(base_cfg, base, [], a)
     det, ref, cfg = load_models(base, a.refiner, base_cfg, dev)
     summary["synth_val"]["base"] = synth_val(det, vcfg, a.val_size)
     say(f"[rounds] base synthetic val: {_sv_line(summary['synth_val']['base'])}")

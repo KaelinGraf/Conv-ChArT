@@ -1,29 +1,5 @@
-"""tools/gen_cutouts.py -- OFFLINE SAM2 segmentation: builds a reusable RGBA
-cutout bank from COCO images for dcc.synth's realistic object-occlusion mode
-(dcc/synth.py's _apply_cutouts / load_cutouts). Run once, ahead of time; the
-generator only ever reads the bank directory back.
-
-RUN UNDER THE EOMT CONDA ENV PYTHON, NOT THE PROJECT'S MLWS ENV -- the two
-envs carry different torch builds and must never be imported in the same
-interpreter:
-
-    /home/kaelin/anaconda3/envs/eomt/bin/python tools/gen_cutouts.py \\
-        --coco /home/kaelin/datasets/coco/train2017 --out /home/kaelin/datasets/cutouts
-
-This process imports only cv2/numpy/torch/sam2/stdlib -- never `dcc`.
-
-Per image: SAM2AutomaticMaskGenerator (default params) proposes masks; each
-is kept iff its area fraction falls in [--min-area-frac, --max-area-frac],
-predicted_iou >= 0.85, stability_score >= 0.9, its bbox clears the image
-border by >= 2px on every side (border-clipped objects have artificial
-straight edges), and its solidity (mask-pixel-area / convex-hull-area) is
->= 0.4 (drops wire-frame/hollow junk -- see tests/test_generator.py). Up to
---max-per-image survivors are kept, by descending predicted_iou. Each kept
-mask is cropped to its bbox and saved as an RGBA PNG (RGB = image crop, A =
-mask*255) directly under --out, named %07d.png in save order.
-
-GPU note: AMG runs ~1-2 s/image on a 5090, so a full --n-images 3000 sweep
-takes ~1-1.5 h; smoke-test with a small --n-images first.
+"""SAM2 cutout bank for object occlusion; run with the eomt environment's python, not MLWS.
+    python tools/gen_cutouts.py --coco <image dir> --out <bank dir> --n-images 3000
 """
 import argparse
 import hashlib
@@ -51,10 +27,6 @@ def build_parser():
 
 
 def _accept(ann, img_h, img_w, min_area_frac, max_area_frac):
-    """SAM2 mask filter predicate: area-fraction bounds, confidence floors,
-    border clearance (drops border-clipped masks -- artificial straight
-    edges), and solidity (drops wire-frame/hollow masks: a thin outline has
-    a small pixel-area relative to the convex hull it encloses)."""
     import cv2
     import numpy as np
 

@@ -1,3 +1,5 @@
+"""Board convention and target renderers.  PYTHONPATH= python -m pytest tests/test_synth.py -q
+"""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))

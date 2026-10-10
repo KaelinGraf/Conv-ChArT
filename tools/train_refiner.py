@@ -1,35 +1,5 @@
-"""tools/train_refiner.py -- Stage 2 (refiner) training loop, separate
-from the detector: own model (dcc.model.Refiner), own optimiser/schedule, own
-runs/<name>/ + checkpoint. Board-agnostic, so there is no freeze_trunk/octave
-concept here -- "same skeleton" as train_detector.py means the same
-argparse/EMA/cosine-LR/checkpoint pattern, not literally every line.
-
-Recipe (all from cfg["refiner_train"]): AdamW (lr, wd via
-dcc.trainutil.param_groups), no grad accumulation (refiner_train has no
-`accum` key -- batch=256 crops is the full per-step batch, cheap at 24x24),
-bf16 autocast + channels_last, grad-clip by global norm, cosine LR + EMA
-update every step. Training stream: SynthStream(stream="refiner",
-render_targets=True) yields one crop at a time (dcc.dataset), so default
-DataLoader collation already produces {"crop": (B,1,24,24), "target":
-(B,64,64)} batches -- no custom collate needed there.
-
-Validation: RefinerVal(n=cfg.synth.refiner_val_composites) yields, per index,
-the RAW (untargeted) crop-record list for one composite (up to
-refiner_max_corners crops) -- a custom collate_fn flattens across composites
-and renders targets via dcc.targets.render_refiner_target, mirroring
-dcc.dataset._render_refiner_sample (private to that module) for this
-differently-shaped source.
-
-The refined-error metric is L2 error in 1/8-px units between the readout and
-GT u* = 31.5 + 8*d (dcc.targets.render_refiner_target's own convention, so no
-unit conversion needed against it). Readout uses dcc.pipeline.soft_argmax
-when importable (same 5x5-window-around-hard-argmax, border-clamped
-algorithm the pipeline uses at inference) -- a local fallback with the
-identical algorithm covers the case it isn't, since this refiner-only metric
-must always be computable here, unlike the detector's ID-accuracy metric,
-which genuinely depends on dcc.pipeline. Bias-vs-jitter (this run's
-acceptance check for the refiner): mean signed error in original px units,
-binned by the true jitter component, separately per axis.
+"""Stage-2 refiner training.
+    PYTHONPATH= python tools/train_refiner.py --config C --name N [--steps S] [--resume CKPT] [--workers W]
 """
 import argparse
 from functools import partial
@@ -66,11 +36,6 @@ def _worker_init(_):
 
 
 def _soft_argmax_fallback(ref_sigmoid):
-    """Same algorithm as dcc.pipeline.soft_argmax (5x5 window around the hard
-    argmax, clamped to [0,59], probability-weighted centroid) -- used only if
-    dcc.pipeline isn't importable, since the refiner's own validation metric
-    must always be computable, unlike detector-side metrics that can be
-    skipped in that case."""
     import torch
     t = ref_sigmoid.reshape(-1, 64, 64)
     B = t.shape[0]
@@ -88,12 +53,6 @@ def _soft_argmax_fallback(ref_sigmoid):
 
 
 def _refiner_val_collate(batch, sigma=1.5):
-    """batch: list of RefinerVal[i] results, each a list of raw {"crop":
-    (24,24) uint8, "d": (2,) float64} records for one composite. Flattens
-    across composites; renders each crop's target via
-    dcc.targets.render_refiner_target. Returns (None, None, None) if the
-    whole collated batch happens to carry zero crops (all composites in it
-    yielded none -- rare, but cut_refiner_crops can skip a corner entirely)."""
     import numpy as np
     import torch
     from dcc.targets import render_refiner_target
@@ -110,10 +69,6 @@ def _refiner_val_collate(batch, sigma=1.5):
 
 
 def _bias_bins(values, errors):
-    """Mean signed error (px) per BIAS_EDGES bin of the true jitter component
-    -- verifies the refiner's error is independent of the crop-centre jitter
-    it was trained against, rather than systematically biased toward or away
-    from zero offset."""
     import numpy as np
     out = {}
     for lo, hi in zip(BIAS_EDGES[:-1], BIAS_EDGES[1:]):
@@ -123,9 +78,6 @@ def _bias_bins(values, errors):
 
 
 def run_refiner_validation(model, loader, device, rl_kw=None):
-    """Returns {val_loss, m03, bias_vs_jitter}. rl_kw: refiner_loss_kwargs(cfg) from the caller --
-    passed in rather than re-resolved here so the val loss is scored with the SAME loss the run
-    trained under, from a single resolution site (eval_checkpoint.py is the other caller)."""
     import numpy as np
     import torch
     from dcc.losses import refiner_loss
@@ -166,10 +118,6 @@ def run_refiner_validation(model, loader, device, rl_kw=None):
             err_y.extend((pred_dy - d[:, 1]).tolist())
 
     errs = np.array(errs)
-    # mean/median/p95 are in 64-grid units (8 units = 1 px, u* = 31.5 + 8d);
-    # the *_px twins and the cumulative fractions exist because the mixed
-    # unit systems in this record (grid here, px in bias_vs_jitter) have
-    # already misled a reader once. Old keys kept for schema continuity.
     m03 = {"mean": float(errs.mean()) if errs.size else None,
            "median": float(np.median(errs)) if errs.size else None,
            "p95": float(np.percentile(errs, 95)) if errs.size else None,
@@ -195,7 +143,7 @@ def main():
     from torch.utils.data import DataLoader
 
     from dcc.dataset import RefinerVal, SynthStream, load_config
-    from dcc.losses import refiner_loss, refiner_loss_kwargs  # noqa: F401 -- fail fast on a missing dcc.losses
+    from dcc.losses import refiner_loss, refiner_loss_kwargs
     from dcc.model import Refiner
     from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, save_ckpt, warn_cfg_drift
 
@@ -209,9 +157,6 @@ def main():
         cfg["refiner_train"]["workers"] = args.workers
     rcfg = cfg["refiner_train"]
 
-    # refiner_width (default 1.0 = the shipped 97,056-param architecture, bit-identical) is the
-    # size lever for the small tiers, where the fixed refiner dominates: 11% of Conv-ChArT's
-    # total but 36% of the 172k detector's. Read from the config so an arm is a one-key cut.
     rl_kw = refiner_loss_kwargs(cfg)
     rw = cfg.get("refiner_width", 1.0)
     model = Refiner(width_mult=rw).to(device, memory_format=torch.channels_last)
@@ -271,7 +216,6 @@ def main():
 
         step += 1
         loss_val = float(loss.detach())
-        # val_time excluded throughout -- see train_detector.py's identical fix.
         elapsed = time.time() - t0 - val_time
         logger.log(step=step, loss=loss_val, lr=lr, grad_norm=float(grad_norm),
                    samples_per_s=n_samples / elapsed if elapsed > 0 else 0.0)

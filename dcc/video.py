@@ -1,40 +1,8 @@
-"""Video harvest: pseudo-labels for real frames from the board's own geometry.
-
-THE MECHANISM. A frame where the network identifies enough corners is an ANCHOR: its corners fit
-the board's canonical lattice through one homography, and that fit -- not the raw detections --
-is the label. The board's rigidity is information the network did not supply, so a label that
-comes from the fit is better than the network's own output on that frame (self-improvement, not
-self-confirmation). Between anchors, the board is TRACKED: each frame's homography is measured
-by aligning the board's known picture to that frame's pixels (ECC; Evangelidis & Psarakis,
-TPAMI 2008), starting from the previous frames' motion. The alignment uses every board pixel at
-once, so it labels frames where no single corner is detectable -- the hard tail no amount of
-per-frame gating can reach. Every frame is aligned to the fixed board model, never to the
-previous frame, so tracking does not drift.
-
-ACCEPTANCE (each is a measured check, not a hope):
-  anchors   >= min_inliers head-identified, refined corners; a non-degenerate canonical set
-            (dcc.pipeline.lattice_gate only rejects the ALL-collinear case); RANSAC at fit_tol px;
-            inlier RMS <= max_rms; and an ECC cross-check that lands within anchor_ecc_tol of the
-            fit -- the alignment and the network must agree on where the board is.
-  tracked   a gap between two anchors is tracked from both ends. A direction that reaches the far
-            anchor is scored against that anchor's independent fit (CLOSURE); one that stops short
-            is tracked back to where it started (FORWARD-BACKWARD). Frames covered by both
-            directions must also agree with each other within agree_tol.
-
-LABEL STATES per corner: visible=True (positive), visible=False (off-frame), visible=None
-("unknown": the position is known but not whether it is observable -- an occluder, or a
-position too uncertain to name one pixel). Unknown is the third state the masked loss
-(dcc.losses mask=) exists for: no gradient either way. Visibility is tested by normalised
-correlation between the frame and the board rendered through the label's homography, around
-each corner, against a threshold RELATIVE to the frame's own alignment quality -- so a dark,
-noisy but unoccluded corner stays positive (the synthetic labelling policy: degraded corners keep
-their labels) while an occluder, which decorrelates, does not.
-
-Coordinates: every label is in the network INPUT frame (cfg input_size, pixel-centre convention),
-the frame the detector's heatmap lives in. Optional intrinsics are given in the 4:3 SENSOR frame
-(the convention dcc.pipeline.detect uses) and converted here; with them, homographies live in the
-undistorted input frame and labels are distorted back, so the record matches the raw image the
-network will see.
+"""Video pseudo-labels. For each frame, anchor_from_detection(dcc.pipeline.detect result, r, n, Lens(...))
+fits the lattice; harvest_labels(frames, anchors, BoardTemplate(bcfg), n, params) labels the frames between
+anchors by ECC tracking; build_record(...) writes corners with visible True / False / None (unknown);
+save_harvest(out, name, images, records, meta) stores images.npy + records.json. Driven by
+tools/video_bootstrap.py.
 """
 import hashlib
 import json
@@ -51,32 +19,26 @@ VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm", ".mpg", ".mpeg"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".pgm"}
 
 HARVEST_DEFAULTS = {
-    "min_inliers": 8,        # measured: 8 rejects a single wrong ID every time and holds the p95 worst
-    "fit_tol": 1.0,          #   projected corner to ~7.5 sigma (5-6 corners: 46% / 3% corrupt fits)
-    "max_rms": 0.75,         # input px, inlier RMS of the anchor fit
-    "min_pid": 0.5,          # class-head confidence for a corner to count toward an anchor
-    "sigma_floor": 0.05,     # input px; a fit's residual can be small by chance at 8 dof
-    "anchor_ecc_tol": 1.0,   # input px, max corner disagreement between fit and ECC at an anchor
-    "rho_min": 0.3,          # ECC correlation below which a track stops
-    "max_track": 600,        # frames
+    "min_inliers": 8,
+    "fit_tol": 1.0,
+    "max_rms": 0.75,
+    "min_pid": 0.5,
+    "sigma_floor": 0.05,
+    "anchor_ecc_tol": 1.0,
+    "rho_min": 0.3,
+    "max_track": 600,
     "ecc_levels": 2,
-    "template_size": 320,    # board template side, px (64 px per square for a 5x5 board)
-    "agree_tol": 1.0,        # input px, forward vs backward track at the same frame
-    "closure_tol": 1.0,      # input px, track vs the independent fit it arrives at
+    "template_size": 320,
+    "agree_tol": 1.0,
+    "closure_tol": 1.0,
     "track_sigma_floor": 0.1,
-    "max_sigma": 1.0,        # a corner less certain than this is "unknown", not a positive
-    "vis_floor": 0.25,       # visibility NCC threshold = max(vis_floor, vis_rel * the frame's own corners'
-    "vis_rel": 0.75,         #   75th-percentile NCC), see corner_visibility
+    "max_sigma": 1.0,
+    "vis_floor": 0.25,
+    "vis_rel": 0.75,
 }
 
 
-# ---------------------------------------------------------------------------------------------
-# frames and coordinates
-# ---------------------------------------------------------------------------------------------
-
 def crop_43(frame):
-    """Centre crop to exactly 4:3 (4k x 3k). dcc.pipeline.detect maps input<->sensor with ONE ratio
-    r = W_in / W_sensor, so any other aspect would misplace every y coordinate."""
     h, w = frame.shape[:2]
     k = min(w // 4, h // 3)
     x0, y0 = (w - 4 * k) // 2, (h - 3 * k) // 2
@@ -93,8 +55,6 @@ def _mono8(img):
 
 
 def iter_frames(src, step=1, max_frames=None):
-    """(index, mono uint8 4:3 frame) from a video file or a directory of images (sorted by name).
-    `index` counts SOURCE frames, so it stays meaningful under step > 1."""
     p = Path(src)
     n = 0
     if p.is_dir():
@@ -131,7 +91,6 @@ def iter_frames(src, step=1, max_frames=None):
 
 
 def to_input(frame_sensor, W_in, H_in):
-    """The detector's own sensor -> input resize (dcc.pipeline.detect: INTER_AREA, skipped at r=1)."""
     if frame_sensor.shape[1] == W_in:
         return frame_sensor
     return cv2.resize(frame_sensor, (W_in, H_in), interpolation=cv2.INTER_AREA)
@@ -147,8 +106,6 @@ def project(H, pts):
 
 
 class Lens:
-    """Optional distortion model in INPUT px. Without distortion every method is the identity."""
-
     def __init__(self, K_sensor=None, dist=None, r=1.0, size=(640, 480)):
         self.K = self.dist = self.maps = None
         if K_sensor is not None:
@@ -176,15 +133,7 @@ class Lens:
         return out.reshape(-1, 2)
 
 
-# ---------------------------------------------------------------------------------------------
-# anchors: the lattice fit as a label
-# ---------------------------------------------------------------------------------------------
-
 def degenerate(canon):
-    """True when a set of canonical lattice points cannot determine a homography: fewer than four,
-    or all but at most one on a single line (3 of 4, 4 of 5, ...). dcc.pipeline.lattice_gate only
-    rejects the ALL-collinear case; a 4-set with three collinear passes it as 'vacuous' and gets an
-    arbitrary homography (measured 2026-10-05: 166.6 px off on noise-free input)."""
     canon = np.asarray(canon, dtype=np.float64)
     m = len(canon)
     if m < 4:
@@ -199,7 +148,6 @@ def degenerate(canon):
 
 
 def _hjac(H, P):
-    """d(projection)/d(h0..h7) for H normalised to H[2,2] = 1, stacked (2m, 8)."""
     X, Y = P[:, 0], P[:, 1]
     w = H[2, 0] * X + H[2, 1] * Y + 1.0
     u = (H[0, 0] * X + H[0, 1] * Y + H[0, 2]) / w
@@ -212,21 +160,18 @@ def _hjac(H, P):
 
 @dataclass
 class Fit:
-    H: np.ndarray          # canonical (col+1, row+1) -> undistorted input px
-    sigma: np.ndarray      # (n*n,) predicted 1-sigma (per axis) error of each projected corner, input px
-    inliers: np.ndarray    # corner indices the fit used
-    rms: float             # inlier residual RMS (per axis), input px
-    rho: float = 0.0       # ECC correlation at this frame (set by the cross-check)
+    H: np.ndarray
+    sigma: np.ndarray
+    inliers: np.ndarray
+    rms: float
+    rho: float = 0.0
 
 
 def fit_lattice(idx, xy, n, min_inliers=8, fit_tol=1.0, max_rms=0.75, sigma_floor=0.05, **_):
-    """Robust canonical-lattice homography from identified corners, with a per-corner label error from
-    the fit's own covariance (Gauss-Newton: sigma^2 (J^T J)^-1, propagated to all n*n corners), so the
-    spread of the inliers -- not just their count -- decides how far the label can be trusted."""
     idx = np.asarray(idx, dtype=int)
     xy = np.asarray(xy, dtype=np.float64).reshape(-1, 2)
     uniq, counts = np.unique(idx, return_counts=True)
-    keep = np.isin(idx, uniq[counts == 1])          # an index claimed twice is ambiguous: drop both
+    keep = np.isin(idx, uniq[counts == 1])
     idx, xy = idx[keep], xy[keep]
     lattice = canon_lattice(n)
     if len(idx) < min_inliers or degenerate(lattice[idx]):
@@ -237,7 +182,7 @@ def fit_lattice(idx, xy, n, min_inliers=8, fit_tol=1.0, max_rms=0.75, sigma_floo
     inl = mask.ravel().astype(bool)
     if inl.sum() < min_inliers or degenerate(lattice[idx[inl]]):
         return None
-    H, _ = cv2.findHomography(lattice[idx[inl]], xy[inl], 0)        # least squares on the inliers
+    H, _ = cv2.findHomography(lattice[idx[inl]], xy[inl], 0)
     if H is None:
         return None
     H = H / H[2, 2]
@@ -255,9 +200,6 @@ def fit_lattice(idx, xy, n, min_inliers=8, fit_tol=1.0, max_rms=0.75, sigma_floo
 
 
 def anchor_from_detection(result, r, n, lens, min_pid=0.5, **fit_kw):
-    """An anchor candidate from one dcc.pipeline.detect result: head-identified corners only (never
-    'recovered' ones -- those came from a homography already, so counting them would be circular),
-    refined by Stage 2 (finite sigma_px), at class confidence >= min_pid."""
     cs = [c for c in result["corners"] if c["source"] == "head" and c["index"] is not None
           and c["p_id"] >= min_pid and np.isfinite(c["sigma_px"])]
     if not cs:
@@ -267,31 +209,22 @@ def anchor_from_detection(result, r, n, lens, min_pid=0.5, **fit_kw):
     return fit_lattice(idx, xy, n, **fit_kw)
 
 
-# ---------------------------------------------------------------------------------------------
-# tracking: measure each frame's homography from its own pixels
-# ---------------------------------------------------------------------------------------------
-
 class BoardTemplate:
-    """The board's known picture for alignment (template px), and a finer render for visibility."""
-
     def __init__(self, bcfg=None, size=320):
         nsq = get_board(bcfg)[1]
         img, _ = render_board(480, bcfg)
         self.nsq, self.size = nsq, size
         self.img = cv2.GaussianBlur(cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA), (0, 0), 0.6)
         sq = size / nsq
-        self.A = np.array([[sq, 0, -0.5], [0, sq, -0.5], [0, 0, 1.0]])            # canonical -> template px
+        self.A = np.array([[sq, 0, -0.5], [0, sq, -0.5], [0, 0, 1.0]])
         self.Ainv = np.linalg.inv(self.A)
         self.hi = cv2.GaussianBlur(img.astype(np.float32), (0, 0), 1.0)
         sq_hi = 480.0 / nsq
-        self.A_hi = np.array([[sq_hi, 0, -0.5], [0, sq_hi, -0.5], [0, 0, 1.0]])    # canonical -> 480 render px
+        self.A_hi = np.array([[sq_hi, 0, -0.5], [0, sq_hi, -0.5], [0, 0, 1.0]])
         self.outline = np.array([[0, 0], [nsq, 0], [nsq, nsq], [0, nsq]], dtype=np.float64)
 
 
 def ecc_align(template, frame, H_init, levels=2, gauss=5):
-    """Refine H (TEMPLATE px -> frame px) by ECC, coarse to fine. Returns (H, rho) or (None, 0.0).
-    ECC maximises the NORMALISED correlation between the template and the frame sampled through H,
-    so it is blind to gain and offset: a dark frame aligns to a bright template."""
     warp = H_init / H_init[2, 2]
     rho = 0.0
     for lvl in range(levels - 1, -1, -1):
@@ -312,8 +245,6 @@ def ecc_align(template, frame, H_init, levels=2, gauss=5):
 
 
 def _quad_ok(H, outline, shape, ref_area=None):
-    """The board outline through H must stay a convex, positively oriented quadrilateral in front of the
-    camera, overlap the frame, and (given ref_area) not change area by more than 1.5x in one step."""
     p = np.hstack([outline, np.ones((4, 1))]) @ H.T
     if np.any(p[:, 2] <= 0):
         return False
@@ -335,10 +266,6 @@ def _area(H, outline):
 
 
 def track(frames, start, H0, tmpl, direction, stop=None, rho_min=0.3, max_track=600, ecc_levels=2, **_):
-    """Follow the board from frame `start` (canonical -> frame homography H0) one frame at a time in
-    `direction` (+1/-1) until ECC fails, rho < rho_min, the geometry turns implausible, or `stop` is
-    reached (inclusive). The previous frames only supply the starting guess (constant velocity in
-    homography space); each frame's answer comes from its own pixels. Returns {t: (H, rho)}."""
     out, hist, t = {}, [H0], start
     while True:
         t += direction
@@ -363,8 +290,6 @@ def track(frames, start, H0, tmpl, direction, stop=None, rho_min=0.3, max_track=
 
 
 def corner_disagreement(H1, H2, n, shape, margin=4.0):
-    """Max distance between the two homographies' projections of the lattice corners that land in
-    (or near) the frame; inf if none does."""
     lat = canon_lattice(n)
     a, b = project(H1, lat), project(H2, lat)
     h, w = shape[:2]
@@ -372,25 +297,7 @@ def corner_disagreement(H1, H2, n, shape, margin=4.0):
     return float(np.linalg.norm(a - b, axis=1)[inside].max()) if inside.any() else float("inf")
 
 
-# ---------------------------------------------------------------------------------------------
-# visibility: is the corner observable, or only located?
-# ---------------------------------------------------------------------------------------------
-
 def corner_visibility(frame, H, tmpl, n, vis_floor=0.25, vis_rel=0.75, **_):
-    """NCC of the frame against the board rendered through H, around each corner. Returns
-    (ncc (n*n,), observable (n*n,) bool).
-
-    The threshold is RELATIVE to the frame's own corners (vis_rel x their 75th percentile, floored at
-    vis_floor): within one frame every unoccluded corner shares the frame's SNR and blur, so an
-    occluded one is an outlier among them. Measured on a synthetic clip with a dark stretch and a
-    sweeping occluder: visible corners score >= 0.85 of that reference at every brightness, occluded
-    ones <= 0.65. An absolute threshold, or one scaled by ECC's whole-board rho, fails in the dark:
-    raw-pixel NCC of a visible corner falls to ~0.45 there while rho (computed on smoothed images)
-    stays ~0.86. The frame is smoothed (sigma 1 px) for the same reason ECC smooths.
-
-    Two windows, both must match: the outer (0.6 of the local square) has enough pixels to be stable
-    in noise; the inner (0.3) is the junction itself, which an occluder edge can cover while leaving
-    most of the outer window visible."""
     h, w = frame.shape[:2]
     lat = canon_lattice(n)
     pts = project(H, lat)
@@ -412,7 +319,7 @@ def corner_visibility(frame, H, tmpl, n, vis_floor=0.25, vis_rel=0.75, **_):
                 break
             a = img[y0:y1, x0:x1].astype(np.float64).ravel()
             b = rend[y0:y1, x0:x1].astype(np.float64).ravel()
-            if np.any(b < 0):                   # window leaves the board render (inner corners never do)
+            if np.any(b < 0):
                 break
             a, b = a - a.mean(), b - b.mean()
             den = np.sqrt((a * a).sum() * (b * b).sum())
@@ -425,20 +332,12 @@ def corner_visibility(frame, H, tmpl, n, vis_floor=0.25, vis_rel=0.75, **_):
     return ncc, np.nan_to_num(ncc, nan=-1.0) >= thr
 
 
-# ---------------------------------------------------------------------------------------------
-# the harvest
-# ---------------------------------------------------------------------------------------------
-
 def _label(H, sigma, source, rho, check):
-    """sigma: a scalar (tracked frames) or one value per corner (anchor fits); input px."""
     return {"H": H, "sigma": np.asarray(sigma, dtype=np.float64), "source": source,
             "rho": float(rho), "check": float(check)}
 
 
 def _fb_accept(frames, run, origin_t, origin_H, tmpl, direction, n, hp):
-    """Forward-backward check for a track that never reached an independent fit: track back from its
-    far end to where it started and compare with the origin's fit. On failure, retry on the nearer
-    two thirds (the drift, if any, accumulated at the far end). Returns (accepted frames, fb error)."""
     frames_t = sorted(run, key=lambda t: abs(t - origin_t))
     for _ in range(4):
         if not frames_t:
@@ -454,8 +353,6 @@ def _fb_accept(frames, run, origin_t, origin_H, tmpl, direction, n, hp):
 
 
 def harvest_labels(frames, anchors, tmpl, n, hp):
-    """{t: label} for every frame the geometry can vouch for. `frames` are the (undistorted) input
-    frames; `anchors` {t: Fit} the candidate fits. Anchors are first cross-checked against ECC."""
     hp = {**HARVEST_DEFAULTS, **(hp or {})}
     good = {}
     for t, fit in sorted(anchors.items()):
@@ -475,7 +372,7 @@ def harvest_labels(frames, anchors, tmpl, n, hp):
             continue
         fwd = track(frames, a, good[a].H, tmpl, +1, stop=b, **hp) if a is not None else {}
         bwd = track(frames, b, good[b].H, tmpl, -1, stop=a, **hp) if b is not None else {}
-        ok_f = ok_b = None                          # None: unverified; float: verified error
+        ok_f = ok_b = None
         if b is not None and b in fwd:
             e = corner_disagreement(fwd.pop(b)[0], good[b].H, n, frames[b].shape)
             stats["closures"].append(e)
@@ -486,7 +383,7 @@ def harvest_labels(frames, anchors, tmpl, n, hp):
             stats["closures"].append(e)
             ok_b = e if e <= hp["closure_tol"] else None
             bwd = bwd if ok_b is not None else {}
-        if fwd and ok_f is None:                    # stopped short, or no far anchor: forward-backward
+        if fwd and ok_f is None:
             keep, e = _fb_accept(frames, fwd, a, good[a].H, tmpl, +1, n, hp)
             stats["fb"].append(e)
             fwd, ok_f = {t: fwd[t] for t in keep}, (e if keep else None)
@@ -515,8 +412,6 @@ def harvest_labels(frames, anchors, tmpl, n, hp):
 
 
 def build_record(t, frame_raw, frame_und, label, tmpl, n, lens, hp):
-    """One SD-05-shaped record (dcc.synth's schema: corners with x, y, index, visible) plus the third
-    visibility state (None = unknown), per-corner label sigma, the board outline and provenance."""
     hp = {**HARVEST_DEFAULTS, **(hp or {})}
     H = label["H"]
     sigma = np.broadcast_to(label["sigma"], (n * n,))
@@ -528,7 +423,7 @@ def build_record(t, frame_raw, frame_und, label, tmpl, n, lens, hp):
     for k, (x, y) in enumerate(pts):
         jx, jy = int(np.rint(x)), int(np.rint(y))
         if not (0 <= jx < wid and 0 <= jy < hgt):
-            vis = False                              # off-frame: no target, no ambiguity
+            vis = False
         elif observable[k] and sigma[k] <= hp["max_sigma"]:
             vis = True
         else:
@@ -542,7 +437,7 @@ def build_record(t, frame_raw, frame_und, label, tmpl, n, lens, hp):
     mask = np.zeros((hgt, wid), np.uint8)
     cv2.fillConvexPoly(mask, np.rint(outline).astype(np.int32), 1)
     board_level = float(np.median(frame_raw[mask > 0])) if mask.any() else 0.0
-    board_mean = float(np.mean(frame_raw[mask > 0])) if mask.any() else 0.0   # not floored by quantisation
+    board_mean = float(np.mean(frame_raw[mask > 0])) if mask.any() else 0.0
     Jc = H[:2, :2] - np.outer(project(H, lat.mean(axis=0, keepdims=True))[0], H[2, :2])
     sv = np.linalg.svd(Jc, compute_uv=False)
     return {"frame": int(t), "source": label["source"], "rho": label["rho"], "check": label["check"],
@@ -552,10 +447,6 @@ def build_record(t, frame_raw, frame_und, label, tmpl, n, lens, hp):
 
 
 def frame_noise(img):
-    """(noise sigma DN, median level DN) of one frame: Immerkaer's estimator (1996) -- the mean absolute
-    response of a Laplacian-difference kernel that cancels locally linear image structure -- with the top
-    10% of responses trimmed so board edges do not read as noise. Works on integer-valued dark frames,
-    where a median-absolute-deviation estimator degenerates to 0."""
     k = np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]], np.float32)
     r = np.abs(cv2.filter2D(img.astype(np.float32), -1, k, borderType=cv2.BORDER_REFLECT))[1:-1, 1:-1].ravel()
     r = np.sort(r)[: max(1, int(0.9 * r.size))]
@@ -563,17 +454,12 @@ def frame_noise(img):
 
 
 def noise_model(frames, records=None):
-    """The clip's own Poisson-Gaussian noise curve, var = shot * level + read_var (DN^2), fitted across
-    frames, plus the board-brightness range the clip actually visits. The darkening augmentation
-    (dcc.realdata) uses both, so a bright real frame is degraded into the clip's own dark regime with the
-    clip's own noise -- not with a synthetic noise model's guess at it."""
     idx = range(0, len(frames), max(1, len(frames) // 80))
     s, lv = zip(*(frame_noise(frames[i]) for i in idx))
     var, lev = np.square(s), np.asarray(lv)
     coef, *_ = np.linalg.lstsq(np.stack([lev, np.ones_like(lev)], axis=1), var, rcond=None)
     out = {"shot": float(max(coef[0], 0.0)), "read_var": float(max(coef[1], 0.05))}
     if records:
-        # MEANS, not medians: in the dark an 8-bit median floors at 1 DN (measured: gain 0.004 read as 0.024)
         levels = np.array([r.get("board_mean", r["board_level"]) for r in records])
         bright = levels[levels >= 20]
         out["board_level_p5"] = float(np.percentile(levels, 5))
@@ -582,9 +468,6 @@ def noise_model(frames, records=None):
 
 
 def bucket_of(rec):
-    """Diversity bucket: (scale octave, board brightness, foreshortening). Without a cap the harvest
-    concentrates on easy frames -- the frames most likely to pass are the ones the model already
-    handles."""
     s = rec["s_px"]
     so = 0 if s < 16 else 1 if s < 32 else 2 if s < 64 else 3
     lv = rec["board_level"]
@@ -593,7 +476,6 @@ def bucket_of(rec):
 
 
 def cap_records(records, cap_per_bucket=None, stride=1):
-    """Temporal stride, then at most cap_per_bucket per diversity bucket, spread evenly in time."""
     recs = records[::max(1, stride)]
     if not cap_per_bucket:
         return recs
@@ -610,8 +492,6 @@ def cap_records(records, cap_per_bucket=None, stride=1):
 
 
 def save_harvest(out_dir, name, images, records, meta):
-    """<out_dir>/<name>/{images.npy, records.json}: images (N, H, W) uint8 memory-mappable, so every
-    DataLoader worker shares one page-cached copy instead of holding its own."""
     d = Path(out_dir) / name
     d.mkdir(parents=True, exist_ok=True)
     np.save(d / "images.npy", np.ascontiguousarray(np.stack(images) if images else
@@ -622,7 +502,6 @@ def save_harvest(out_dir, name, images, records, meta):
 
 
 def overlay(image, rec):
-    """BGR overlay: positives green, unknown orange (hollow), off-frame omitted; source tag."""
     from dcc.viz import draw_overlay
 
     col = {True: (0, 200, 0), None: (0, 140, 255)}

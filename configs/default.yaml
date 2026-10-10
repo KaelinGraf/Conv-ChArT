@@ -1,4 +1,6 @@
-input_size: [1600, 1200]   # native OV2311 4:3 crop, rho = 1 (Kaelin 2026-07-27)        # (W, H) network input
+# Default configuration: board, pipeline thresholds, generator (synth), detector training (train)
+# and refiner training (refiner_train). Copy, edit, and pass with --config.
+input_size: [1600, 1200]
 sigma_hm: 2.0
 sigma_cls: 1.0
 alpha: 2
@@ -8,12 +10,12 @@ tau_hm: 0.3
 tau_id: 0.5
 lattice_tol_px: 3.0
 negative_p: 0.05
-scale_range_px: [12, 128]     # s at input, log-uniform; floor 16->12 (Kaelin 2026-07-27: "furthest should be a bit further away") -- markers are unreadable below ~16, corners still learnable
+scale_range_px: [12, 128]
 refiner_jitter_px: 4
 freeze_trunk: false
-attn_blocks: 2                  # MHSA+MLP at bottleneck (MT-01)
+attn_blocks: 2
 attn_heads: 8
-rope_lambda_min_cells: 2.5       # replaces MT-06's rope_base: standard-RoPE base can't reach the spec's own 2-cell short end at a useful long end; wavelength-anchoring can (nudged 2->2.5 to clear the Nyquist degeneracy), signed off 2026-07-27
+rope_lambda_min_cells: 2.5
 board:
   squares: [5, 5]
   dictionary: DICT_5X5_50
@@ -27,11 +29,11 @@ synth:
   train_seed: 2000
   pose_seed: 3000
   val_size: 10000
-  refiner_res_mult: 1   # rho = 1: sensor frame IS the input frame (SD-07 "2x" assumed rho>=2; signed off 2026-07-27)
+  refiner_res_mult: 1
   refiner_max_corners: 8
   refiner_val_composites: 1250
-  refiner_generic_frac: 0.0   # Slice B5 task #6: optional synthetic-junction refiner-crop blend, off by default (spec-literal SD-07)
-  refiner_full_frac: 0.08   # dcc.refiner_data's mixed stream: this fraction of samples pay the full generate_sample+cut_refiner_crops render (global-photometric realism the fast local-window arm can't reproduce) as distribution insurance; the rest take the fast arm. An in-worker per-sample coin, not a dedicated worker (torch's round-robin batch collection would bottleneck the whole loader behind one slow worker) and not a cross-process queue (batch composition would become scheduler-timing-dependent, breaking (seed, worker) stream determinism).
+  refiner_generic_frac: 0.0
+  refiner_full_frac: 0.08
   rot_deg: 180
   shear_deg: 35
   translate_frac: 0.45
@@ -39,7 +41,7 @@ synth:
   tilt_max_deg: 60
   fov_scale: [0.7, 1.4]
   bg_hflip_p: 0.5
-  prefilter:   # Slice B5 task #7: anti-alias blur before warpPerspective minifies the board render
+  prefilter:
     enabled: true
     k: 0.5
   occlusion:
@@ -54,20 +56,20 @@ synth:
   photometric:
     gauss_noise_p: 0.5
     noise_std: [3.2, 7.1]
-    sensor_noise_enabled: true   # rev-2 aug pack (task #29, Kaelin 2026-07-27): Poissonian-Gaussian (Foi et al. 2008 IEEE TIP; EMVA 1288) replaces the legacy additive draw above when true; gauss_noise_p still gates WHETHER noise fires, this only picks the formula (kept false-able for A/B)
-    sensor_noise_electrons_per_dn: [1.5, 30.0]   # seeded from the OV2311 datasheet (OVT product brief v1.9 2023: 3um x 3um OmniPixel3-GS global-shutter pixel, 10-bit ADC -- confirmed) -- OmniVision does NOT publish full-well/conversion-gain/SNR for this part (even their own preliminary datasheet for the sibling OV9281, same OmniPixel3-GS 3um pixel family, marks those fields "TBD"). Range derived, not measured: ~30 e-/DN at the 8-bit workspace's low-gain/bright end (assuming an ~8000e- full well at base gain maps to the 255 white point, consistent with a ~4x 10-bit-to-8-bit reduction), down to ~1.5-4 e-/DN at the high-gain/dark end (matches this key's original placeholder range) -- PROVISIONAL, to be recalibrated from real dark/flat frames captured during task #26
-    sensor_noise_read_std: [1.0, 3.0]   # same provisional-pending-#26 status as electrons_per_dn above; not independently re-derived from the datasheet (OV2311 doesn't publish read noise either, and DN-scale read noise properly co-varies with gain/K, which this pack does not model as coupled draws)
+    sensor_noise_enabled: true
+    sensor_noise_electrons_per_dn: [1.5, 30.0]
+    sensor_noise_read_std: [1.0, 3.0]
     motion_blur_p: 0.5
     motion_blur_kmax: 5
     gauss_blur_p: 0.25
-    speckle_p: 0.5   # Slice B5 task #12: Deep ChArUco Table 1's speckle term
+    speckle_p: 0.5
     speckle_std: [0.03, 0.12]
     mult_noise_p: 0.5
     mult_noise_range: [0.95, 1.05]
     brightness_p: 0.5
-    brightness_range: [-0.98, 0.35]   # floor -0.8->-0.98 (Kaelin 2026-07-27): deepest draws must crush the BOARD below human perceptibility (white square -> <=5/255), not just the background; the differencing camera's underexposure failure mode
-    brightness_add_floor: -0.96       # additive branch only (Kaelin 2026-07-27 "there needs to be SOME signal"): unclamped, additive b<-0.965 wipes whole frames to all-zero with positive labels, contradicting the negative stream; -0.96 keeps >=10/255 of white-point. Multiplicative branch scales, never wipes, so it keeps the full range.
-    contrast_p: 0.5   # Slice B5 task #12: reference pipeline's only contrast source, restored
+    brightness_range: [-0.98, 0.35]
+    brightness_add_floor: -0.96
+    contrast_p: 0.5
     contrast_range: [0.8, 1.2]
     rgb_shift_p: 0.5
     rgb_shift_limit: 20
@@ -75,36 +77,36 @@ synth:
     ghost_p: 0.25
     ghost_alpha: [0.1, 0.5]
     ghost_shift_px: [1, 4]
-    specular_p: 0.15   # rev-2 aug pack (task #29): board-anchored Blinn-Phong lobe (Blinn 1977)
+    specular_p: 0.15
     specular_strength: [30, 220]
     specular_exponent: [20, 200]
-    specular_spread_frac: [0.08, 0.2]   # lobe spread, as a fraction of min(w2, h2) -- not pinned by the brief, chosen for a plausibly board-scaled hot spot
-    droplet_p: 0.1   # rev-2 aug pack (task #29): adherent droplets (Roser & Geiger ICCV 2009; You et al. CVPR 2013)
+    specular_spread_frac: [0.08, 0.2]
+    droplet_p: 0.1
     droplet_n: [1, 4]
-    droplet_mode_b_p: 0.5   # coin between mode (a) bokeh blob and mode (b) refractive patch; mode (b) is full-canvas-arm only regardless (see dcc/synth.py)
+    droplet_mode_b_p: 0.5
     droplet_bokeh_radius: [4, 18]
     droplet_bokeh_brightness: [40, 220]
     droplet_refractive_radius: [6, 20]
     droplet_refractive_minify: [0.15, 0.4]
     droplet_refractive_alpha: [0.6, 0.9]
     droplet_refractive_blur_sigma: [2, 4]
-    droplet_hole_alpha_thresh: 0.7   # mode-(b) droplets past this alpha AND radius register an occlusion hole (information-destroying, task #29's only label-touching effect)
+    droplet_hole_alpha_thresh: 0.7
     droplet_hole_radius_thresh: 8
-    vignette_p: 0.5   # rev-2 aug pack (task #29): radial falloff about canvas centre (Goldman TPAMI 2010)
+    vignette_p: 0.5
     vignette_strength: [0.05, 0.25]
-    ink_contrast_p: 0.3   # rev-2 aug pack (task #29): NIR ink-contrast jitter -- carbon-black ink/toner absorbs NIR strongly, many dye inks are comparatively NIR-transparent (Vis-NIR ink discrimination forensics, e.g. Forensic Science International 254 (2015))
+    ink_contrast_p: 0.3
     ink_contrast_scale: [1.0, 1.6]
-    differencing_p: 0.5   # rev-2 aug pack (task #29, Kaelin's design): flash/no-flash differencing pair (Petschnigg et al. SIGGRAPH 2004; Eisemann & Durand SIGGRAPH 2004); mutually exclusive with brightness_p above (see dcc/synth.py)
-    differencing_ambient: [0.05, 0.95]   # rev-3 (task #31, Kaelin's 940nm rig photometry, 2026-07-28): daylight pedestal, night through midday -- PROVISIONAL, pending measured lit/unlit histograms from tasks #26/#31
-    differencing_illum_peak: [0.15, 0.9]   # rev-3: LED increment relative to scene reflectance, ON TOP OF the ambient pedestal (see dcc/synth.py) -- low ratios against high ambient are the deliberately-hard daytime cases -- PROVISIONAL, same status as differencing_ambient above
+    differencing_p: 0.5
+    differencing_ambient: [0.05, 0.95]
+    differencing_illum_peak: [0.15, 0.9]
     differencing_illum_floor: [0.05, 0.3]
-    differencing_illum_sigma_frac: [0.25, 0.45]   # illumination-lobe spread, as a fraction of min(w2, h2) -- not pinned by the brief
+    differencing_illum_sigma_frac: [0.25, 0.45]
     differencing_shift_px: [0.2, 3.0]
-    dark_greyout_white_thresh: 25   # task #25 remainder: deep-exposure grey-out gate for the differencing branch -- OUTPUT-coupled (99th percentile of the clipped differenced frame below this, ~10% of full scale), not ambient (gate defect found at review: ambient alone doesn't determine output brightness, see dcc/synth.py)
-    dark_greyout_brightness_thresh: -0.9   # ... and for the legacy brightness branch (b below this)
+    dark_greyout_white_thresh: 25
+    dark_greyout_brightness_thresh: -0.9
     dark_greyout_blend: [0.3, 0.7]
-    fpn_p: 0.3   # rev-2 aug pack (task #29): fixed-pattern noise (EMVA 1288; El Gamal & Eltoukhy 2005) -- full-canvas arm only, see dcc/synth.py
-    fpn_col_std: [0.3, 1.2]   # row banding reuses this same per-sample draw at half sigma, not a separate range
+    fpn_p: 0.3
+    fpn_col_std: [0.3, 1.2]
     fpn_prnu_p: 0.5
     fpn_prnu_std: [0.005, 0.015]
 train:

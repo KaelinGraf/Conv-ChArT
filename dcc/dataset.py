@@ -1,8 +1,5 @@
-"""Torch layer over dcc.synth — thin: seeding, streaming/map-style shape,
-and (optionally) target rendering via dcc.targets. Never stores tensors;
-every batch is generated on the fly from an explicit per-worker/per-index
-Generator (built via default_rng, the one legitimate use of the global
-np.random namespace here).
+"""Torch datasets over dcc.synth: SynthStream(cfg, stream="detector"|"refiner", seed, render_targets)
+for training, SynthVal and RefinerVal for fixed-seed validation; load_config(path) reads a YAML config.
 """
 import numpy as np
 import torch
@@ -39,27 +36,12 @@ def _render_refiner_sample(crop, sigma=1.5):
 
 
 def _maybe_replace_generic(crop, rng, frac):
-    """Slice B5 (task #6): shared glue for SynthStream's refiner branch and
-    RefinerVal, so the coin+replace logic lives exactly once. frac <= 0 (the
-    config default, and an absent synth.refiner_generic_frac key alike, via
-    the callers' `.get(..., 0.0)`) short-circuits before touching `rng` at
-    all, so the byte-identical-to-before-this-feature stream is unconditional
-    at frac=0, not just typical. Returns `crop` itself (same object) when not
-    replaced, so callers/tests can tell the two cases apart by identity."""
     if frac > 0 and rng.random() < frac:
         return make_generic_crop(rng)
     return crop
 
 
 class SynthStream(IterableDataset):
-    """Infinite on-the-fly stream. stream='detector' yields whole composites
-    at cfg["input_size"]; stream='refiner' draws dcc.refiner_data's mixed
-    arm per iteration (fast local-window crops most of the time, an
-    occasional full refiner_res_mult-x composite + harvest for distribution
-    insurance -- see synth.refiner_full_frac) and yields its crops one at a
-    time -- each optionally swapped for a synthetic generic-corner crop, per
-    synth.refiner_generic_frac (see _maybe_replace_generic)."""
-
     def __init__(self, cfg, stream="detector", seed=None, render_targets=False):
         self.cfg = cfg
         self.stream = stream
@@ -81,9 +63,6 @@ class SynthStream(IterableDataset):
                     yield record["image"], record
         else:
             frac = self.cfg["synth"].get("refiner_generic_frac", 0.0)
-            # sigma_ref mirrors sigma_hm/sigma_cls: the refiner's 64x64 target width, in 1/8-px
-            # grid units. It was render_refiner_target's Python default at every call site and
-            # so unreachable from config -- the same dead-knob shape as the alpha/beta pair.
             sigma = self.cfg.get("sigma_ref", 1.5)
             while True:
                 for crop in mixed_refiner_crops(self.cfg, rng, bg_files):
@@ -92,10 +71,6 @@ class SynthStream(IterableDataset):
 
 
 class SynthVal(Dataset):
-    """Fixed-size, bit-identical-by-construction detector validation set.
-    s_px is stratified across octaves of scale_range_px: index i owns the
-    i-th of n equal log-width slices, jittered within its slice."""
-
     def __init__(self, cfg, n, seed=None):
         self.cfg = cfg
         self.n = n
@@ -117,12 +92,6 @@ class SynthVal(Dataset):
 
 
 class RefinerVal(Dataset):
-    """Fixed-size, bit-identical-by-construction refiner validation set,
-    map-style over composites: index i is one refiner_res_mult-x composite,
-    yielding its list of crop records (up to refiner_max_corners) -- each
-    optionally swapped for a synthetic generic-corner crop, per
-    synth.refiner_generic_frac (see _maybe_replace_generic)."""
-
     def __init__(self, cfg, n, seed=None):
         self.cfg = cfg
         self.n = n

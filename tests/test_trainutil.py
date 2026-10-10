@@ -1,3 +1,6 @@
+"""Training utilities: LR schedule, EMA, checkpoints, parameter groups, JSONL logger.
+    PYTHONPATH= python -m pytest tests/test_trainutil.py -q
+"""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -12,11 +15,6 @@ from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, 
 
 
 class _Toy(nn.Module):
-    """Linear + BatchNorm1d -- one bias-bearing layer, one norm layer, so
-    param_groups has both exclusion rules to exercise, and EMA/ckpt tests
-    have both a floating buffer (running_mean/var) and a non-floating one
-    (num_batches_tracked) to round-trip."""
-
     def __init__(self):
         super().__init__()
         self.lin = nn.Linear(4, 4)
@@ -75,7 +73,7 @@ def test_ckpt_roundtrip(tmp_path):
         ema.update(model)
 
     torch.manual_seed(999)
-    torch.rand(7)  # move rng state off the trivial post-seed point
+    torch.rand(7)
 
     ckpt_path = tmp_path / "ckpt.pt"
     save_ckpt(ckpt_path, step=42, resume_count=3, model=model, ema=ema, optim=optim,
@@ -83,9 +81,7 @@ def test_ckpt_roundtrip(tmp_path):
 
     expected_torch = torch.rand(5)
 
-    torch.rand(50)  # perturb further -- load_ckpt below must undo this too
-    # (numpy global RNG is deliberately NOT in the ckpt: all numpy draws are
-    # Generator-explicit project-wide; see save_ckpt's docstring.)
+    torch.rand(50)
     model2 = _Toy()
     optim2 = torch.optim.AdamW(param_groups(model2, wd=0.5), lr=5e-2)
     ema2 = EMA(model2, decay=0.5)
@@ -109,15 +105,10 @@ def test_ckpt_roundtrip(tmp_path):
         assert torch.equal(st_old["exp_avg"], st_new["exp_avg"])
         assert torch.equal(st_old["exp_avg_sq"], st_new["exp_avg_sq"])
 
-    # bitwise RNG restore: the very next draw must match what would have
-    # come right after save_ckpt, despite the perturbation in between.
     assert torch.equal(torch.rand(5), expected_torch)
 
 
 def test_ckpt_restore_optim_false(tmp_path):
-    """freeze_trunk retarget path: restore_optim=False must still restore
-    model/ema and leave the caller's optimizer (built fresh, e.g. over a
-    different param subset) completely untouched."""
     torch.manual_seed(2)
     model = _Toy()
     optim = torch.optim.AdamW(param_groups(model, wd=0.01), lr=1e-3)
@@ -127,14 +118,14 @@ def test_ckpt_restore_optim_false(tmp_path):
 
     model2 = _Toy()
     optim2 = torch.optim.AdamW(param_groups(model2, wd=0.5), lr=9e-2)
-    assert optim2.state_dict()["state"] == {}  # no .step() taken yet -- the untouched baseline
+    assert optim2.state_dict()["state"] == {}
     ckpt = load_ckpt(ckpt_path, model2, EMA(model2), optim2, map_location="cpu", restore_optim=False)
 
     assert ckpt["step"] == 7
     for k, v in model.state_dict().items():
         assert torch.equal(v, model2.state_dict()[k]), k
-    assert optim2.param_groups[0]["lr"] == pytest.approx(9e-2)  # untouched, not optim's 1e-3
-    assert optim2.state_dict()["state"] == {}  # still untouched -- restore_optim=False skipped it
+    assert optim2.param_groups[0]["lr"] == pytest.approx(9e-2)
+    assert optim2.state_dict()["state"] == {}
 
 
 def test_param_groups_excludes_bias_and_norm():

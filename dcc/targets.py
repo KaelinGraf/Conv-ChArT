@@ -1,16 +1,10 @@
-"""Conv-ChArT training-target renderers — pure numpy, pure functions of the
-label record, never persisted to disk (sigma stays tunable without regen).
-
-Shared convention: continuous positions are (x, y) float64; targets combine
-per-source Gaussians by MAX (never sum, per CornerNet), then force the exact
-containing pixel/cell to 1.0 so the Y=1 branch of the focal loss is reachable.
+"""Training targets from labels: render_heatmap(pts, vis, (W, H), sigma), render_class_targets(pts, vis,
+idx, (W, H), sigma, n_cls) at H/4, and render_refiner_target(offset) on the 64x64 refiner grid.
 """
 import numpy as np
 
 
 def _splat_max(canvas: np.ndarray, cx: float, cy: float, sigma: float) -> None:
-    """Max-combine an unnormalised Gaussian centred at (cx, cy) into canvas
-    (row-major [y][x]), window +/- 3 sigma, floor/ceil, clipped to canvas."""
     h, w = canvas.shape
     x0, x1 = max(0, int(np.floor(cx - 3 * sigma))), min(w - 1, int(np.ceil(cx + 3 * sigma)))
     y0, y1 = max(0, int(np.floor(cy - 3 * sigma))), min(h - 1, int(np.ceil(cy + 3 * sigma)))
@@ -23,7 +17,6 @@ def _splat_max(canvas: np.ndarray, cx: float, cy: float, sigma: float) -> None:
 
 def render_heatmap(pts: np.ndarray, vis: np.ndarray, size_wh: tuple[int, int],
                     sigma: float = 2.0) -> np.ndarray:
-    """Detector heatmap target, shape (H, W)."""
     w, h = size_wh
     hm = np.zeros((h, w), dtype=np.float32)
     for (px, py), v in zip(pts, vis):
@@ -39,11 +32,6 @@ def render_heatmap(pts: np.ndarray, vis: np.ndarray, size_wh: tuple[int, int],
 
 def render_class_targets(pts: np.ndarray, vis: np.ndarray, idx: np.ndarray,
                           size_wh: tuple[int, int], sigma: float = 1.0, n_cls: int = 16) -> np.ndarray:
-    """Per-corner-index class target, shape (n_cls, H//4, W//4). Cell j aggregates input
-    pixels 4j..4j+3; cell-space position xc = (x+0.5)/4 - 0.5 keeps the
-    pixel-centre convention (pixel x=1.5, the centre of cell 0, maps to 0.0).
-    n_cls is the board's inner-corner count (dcc.board.n_corners); default 16
-    matches the project's 5x5 board."""
     w, h = size_wh
     if w % 4 or h % 4:
         raise ValueError(f"size_wh must be divisible by 4, got {size_wh}")
@@ -60,8 +48,6 @@ def render_class_targets(pts: np.ndarray, vis: np.ndarray, idx: np.ndarray,
 
 
 def render_refiner_target(d: np.ndarray, sigma: float = 1.5) -> np.ndarray:
-    """Refiner target, shape (64, 64) at 8x resolution over the central
-    8x8 px. d = (dx, dy) sub-pixel offset; u (col) <- x, v (row) <- y."""
     dx, dy = d
     if max(abs(dx), abs(dy)) > 3.9375:
         raise ValueError(f"offset {tuple(d)} exceeds the 64x64 @ 8x support (max 3.9375 px)")

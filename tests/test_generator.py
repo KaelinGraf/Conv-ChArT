@@ -1,3 +1,6 @@
+"""Synthetic generator: warps, perspective calibration, visibility, cutouts, determinism, val
+stratification (the slowest file, a few minutes).  PYTHONPATH= python -m pytest tests/test_generator.py -q
+"""
 import copy
 import sys
 from pathlib import Path
@@ -19,7 +22,6 @@ CONFIG_PATH = Path(__file__).parents[1] / "configs" / "default.yaml"
 
 @pytest.fixture(scope="module")
 def bg_files(tmp_path_factory):
-    """4 random-noise 640x640 backgrounds — no COCO/network dependency."""
     d = tmp_path_factory.mktemp("bgs")
     rng = np.random.default_rng(0xC0FFEE)
     paths = []
@@ -33,10 +35,6 @@ def bg_files(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def cutout_bank(tmp_path_factory):
-    """3-file synthetic RGBA cutout bank -- filled circle, rotated square
-    (diamond), small blob -- no SAM2/COCO dependency. Hard (non-anti-aliased)
-    edges throughout, so any soft alpha transition seen downstream is
-    attributable to place_cutout's own feathering, not the fixture."""
     d = tmp_path_factory.mktemp("cutout_bank")
 
     circle = np.zeros((80, 80, 4), dtype=np.uint8)
@@ -66,10 +64,6 @@ def cfg(bg_files):
 
 
 def _recompose_H(comp, render_res, w2, h2, nx):
-    """Independent inline re-derivation of DS-07/SD-02 Rev C's full 3x3
-    homography, from the reported components alone -- does not call
-    anything in dcc.synth. nx is the board's per-side square count
-    (SQ = render_res // nx)."""
     s, theta = comp["s"], comp["theta"]
     shx, shy = comp["shear_x"], comp["shear_y"]
     tx, ty = comp["tx"], comp["ty"]
@@ -114,11 +108,6 @@ def test_warp_roundtrip(cfg, bg_files):
     print("test_warp_roundtrip max recompose err:", max_err)
     assert max_err < 1e-9
 
-    # Content check, deliberately moderate (non-adversarial) geometry:
-    # classical cornerSubPix degrades near the +-35deg shear / +-180deg
-    # rotation extremes of SD-02's envelope regardless of whether the warp
-    # math is right -- that is a network problem (DS-06), not a
-    # geometry-roundtrip one, so it is not what this assertion is for.
     def _content_check(record):
         img = record["image"]
         corners = np.array([[c["x"], c["y"]] for c in record["corners"]])
@@ -143,9 +132,6 @@ def test_warp_roundtrip(cfg, bg_files):
                                      components={"theta": theta, "shear_x": shx, "shear_y": shy})
         measured.append(_content_check(record))
 
-    # SD-02 Rev C: same moderate geometry, now also with a mild tau=20deg
-    # perspective term forced in -- the homography path must not degrade
-    # classical subpixel detection at an everyday tilt.
     rng = np.random.default_rng([9003, 0])
     s = rng.uniform(90, 128)
     record, _ = generate_sample(cfg, rng, bg_files, s=s, photometric=False, occlude=False,
@@ -157,19 +143,6 @@ def test_warp_roundtrip(cfg, bg_files):
 
 
 def test_perspective_calibration(cfg):
-    """SD-02 Rev C derivation sanity: the per-render-px perspective term
-    g = sin(tau)*s/(f*SQ), (gx,gy) = g*(cos psi, sin psi) must reproduce the
-    homography induced by physically tilting a fronto-parallel board in
-    front of a pinhole camera, built here gen_eval_pose-style (K@[r1|r2|t]@S,
-    see that module's docstring) -- independently, NOT imported from it.
-
-    Rodrigues' rotation-ANGLE-AXIS there is the axis the board rotates about;
-    this module's psi is the axis of the resulting FORESHORTENING gradient,
-    which is perpendicular to the rotation axis -- so the pinhole side below
-    uses rotation axis angle (psi - 90deg) to model the same physical tilt.
-    That is a bookkeeping offset between two independent conventions, not a
-    bug in either one (confirmed numerically before writing this test).
-    """
     render_res = cfg["synth"]["render_res"]
     W, H = cfg["input_size"]
     nx = get_board(cfg.get("board"))[1]
@@ -179,9 +152,6 @@ def test_perspective_calibration(cfg):
     zero6 = {"theta": 0.0, "shear_x": 0.0, "shear_y": 0.0, "tx": 0.0, "ty": 0.0}
 
     def mine_H(psi, tau, s, fov_scale):
-        # reuses _recompose_H (already an independent re-derivation, see
-        # above) with the affine's 6 DoF pinned to identity/zero so only the
-        # scale + perspective factor under test is exercised.
         return _recompose_H({**zero6, "s": s, "tilt": tau, "psi": psi, "fov_scale": fov_scale},
                              render_res, W, H, nx)
 
@@ -212,16 +182,10 @@ def test_perspective_calibration(cfg):
         return local_square_size(Hm, *near_c) / local_square_size(Hm, *far_c) - 1.0
 
     s, fov_scale = 64.0, 1.0
-    # exact at tau=0: both constructions degenerate to the identical affine,
-    # up to the overall homogeneous scale a homography is only defined to
-    # (mine is [2,2]-normalised by construction; K@Rt@S is not)
     H_mine0 = mine_H(0.7, 0.0, s, fov_scale)
     H_pin0 = pinhole_H(0.7, 0.0, s, fov_scale)
     assert np.allclose(H_mine0, H_pin0 / H_pin0[2, 2], atol=1e-9)
 
-    # near/far foreshortening anisotropy: tight at small tau, within ~15% up
-    # to tau=60deg (psi axis-aligned with the render grid, matching how an
-    # actual board square is measured in test_perspective_foreshortening).
     results = {}
     for psi_deg in (0, 90):
         psi = np.radians(psi_deg)
@@ -236,9 +200,6 @@ def test_perspective_calibration(cfg):
                 assert relerr < 0.02, f"psi={psi_deg} tau={tau_deg}: relerr={relerr:.4f} (expected ~exact)"
     print("test_perspective_calibration (psi,tau) -> (anis_mine, anis_pinhole, relerr):", results)
 
-    # w > 0 across the render canvas at the worst case of the sampling
-    # envelope (max s, tilt_max_deg + margin, min fov_scale) -- zero-visible
-    # positives with points behind the "camera" cannot occur.
     _, hi_s = cfg["scale_range_px"]
     fov_lo, _ = cfg["synth"]["fov_scale"]
     tilt_margin = np.radians(cfg["synth"]["tilt_max_deg"]) + np.radians(15)
@@ -252,14 +213,6 @@ def test_perspective_calibration(cfg):
 
 
 def test_perspective_foreshortening(cfg, bg_files):
-    """SD-02 Rev C sign/direction check: forcing psi=0 aligns the tilt's
-    foreshortening gradient with the render x-axis, i.e. with the board's
-    own grid columns, so a tau=50deg tilt must measure the near (low-x,
-    col 0-1) squares larger than the far (high-x, col 2-3) squares in every
-    row. Separately, tau=0 must degenerate exactly to the pre-existing
-    affine path: H's third row is exactly [0, 0, 1] and its top two rows
-    (the A/translation part) exactly match the independent affine-only
-    recomposition."""
     render_res = cfg["synth"]["render_res"]
     W, H = cfg["input_size"]
     nx = get_board(cfg.get("board"))[1]
@@ -280,7 +233,6 @@ def test_perspective_foreshortening(cfg, bg_files):
         right = np.hypot(*(np.subtract(corners[idx(row, 3)], corners[idx(row, 2)])))
         assert left > right, f"row {row}: near-edge square ({left:.2f}px) not > far-edge ({right:.2f}px)"
 
-    # tau=0: pure affine, byte-exact
     rng0 = np.random.default_rng(72)
     fixed = {"theta": 0.3, "shear_x": 0.05, "shear_y": -0.05, "tx": 10.0, "ty": -5.0}
     record0, meta0 = generate_sample(cfg, rng0, bg_files, s=64.0, force_negative=False,
@@ -305,12 +257,12 @@ def test_perspective_foreshortening(cfg, bg_files):
 def test_visibility_truth_table():
     holes = [(100, 100, 20, 20)]
     size_wh = (640, 480)
-    assert visible((105, 105), holes, size_wh) is False           # inside hole
-    assert visible((99.5, 105), holes, size_wh) is False          # hole edge x0-0.5, half-open
-    assert visible((99.4, 105), holes, size_wh) is True           # just left of the hole
-    assert visible((-1.0, 100), holes, size_wh) is False          # outside frame (x < -0.5)
-    assert visible((639.5, 100), holes, size_wh) is False         # x = W-0.5 exactly, half-open
-    assert visible((300, 200), holes, size_wh) is True            # clean
+    assert visible((105, 105), holes, size_wh) is False
+    assert visible((99.5, 105), holes, size_wh) is False
+    assert visible((99.4, 105), holes, size_wh) is True
+    assert visible((-1.0, 100), holes, size_wh) is False
+    assert visible((639.5, 100), holes, size_wh) is False
+    assert visible((300, 200), holes, size_wh) is True
 
 
 def test_index_under_rotation(cfg, bg_files):
@@ -326,10 +278,8 @@ def test_index_under_rotation(cfg, bg_files):
 
     p0 = (record0["corners"][0]["x"], record0["corners"][0]["y"])
     p1 = (record1["corners"][0]["x"], record1["corners"][0]["y"])
-    assert not np.allclose(p0, p1)  # theta actually moved corner 0
+    assert not np.allclose(p0, p1)
 
-    # Identity rides the warp, never the image position: channel 0's target
-    # peaks at corner 0's own reported position in BOTH cases.
     for p in (p0, p1):
         ct = render_class_targets(np.array([p]), np.array([True]), np.array([0]), (W, H), sigma=cfg["sigma_cls"])
         assert np.argwhere(ct[0] == 1.0).shape[0] == 1
@@ -386,11 +336,6 @@ def test_refiner_stream(cfg, bg_files):
     print("test_refiner_stream d-histogram fractions:", (hist / hist.sum()).tolist())
     assert hist.min() / hist.sum() >= 0.05
 
-    # Content check on 100 photometric-off crops, at a fixed comfortably-large
-    # s (see test_warp_roundtrip: classical subpixel detection at the small
-    # end of scale_range_px is a known, spec-acknowledged hard regime, not a
-    # defect in cut_refiner_crops' own crop/offset arithmetic, which is what
-    # this check targets).
     rng2 = np.random.default_rng(62)
     errs = []
     while len(errs) < 100:
@@ -421,9 +366,6 @@ def test_determinism(cfg):
     assert not np.array_equal(img_a, img_c)
     assert rec_a["corners"] != rec_c["corners"]
 
-    # RNG-purity: every random draw in dcc/ goes through a passed-in
-    # Generator; default_rng/Generator-typed mentions are the only allowed
-    # uses of the global np.random namespace.
     dcc_dir = Path(__file__).parents[1] / "dcc"
     for f in dcc_dir.glob("*.py"):
         text = f.read_text()
@@ -443,8 +385,6 @@ def test_val_stratification(cfg):
     edges = np.array(sorted({float(e) for e in (a, 16.0, 32.0, 64.0, 128.0, b) if a <= e <= b}))
     counts, _ = np.histogram(s_vals, bins=edges)
     print("test_val_stratification bin counts:", counts.tolist(), "n_positive:", len(s_vals))
-    # log-uniform s: expected mass per bin is its log-width share (the low
-    # [12,16) bin is a sub-octave, so equal-share would silently mis-state it)
     expected = len(s_vals) * np.diff(np.log(edges)) / np.log(edges[-1] / edges[0])
     assert np.all(np.abs(counts - expected) / expected <= 0.20)
 
@@ -467,14 +407,7 @@ def test_zero_visible_positive_legal(cfg, bg_files):
     assert np.all(hm == 0.0) and np.all(ct == 0.0)
 
 
-# --------------------------------------------------- object-cutout occlusion --
-
 def test_cutout_visibility(cutout_bank):
-    """place_cutout in isolation (no rng/bank plumbing): a corner under the
-    placed disk's opaque alpha reads invisible by the exact geometric test
-    generate_sample applies (visible() AND occ_alpha < 0.5); a corner well
-    outside the disk (even past its feathered edge) stays visible; and the
-    boundary itself shows a real feathered transition, not a hard 0/1 step."""
     rgba = cv2.imread(str(Path(cutout_bank) / "0000000.png"), cv2.IMREAD_UNCHANGED)
     assert rgba is not None and rgba.shape == (80, 80, 4)
 
@@ -485,7 +418,6 @@ def test_cutout_visibility(cutout_bank):
     assert bbox is not None
 
     def geom_visible(x, y):
-        # exactly generate_sample's point-in-alpha extension of visible()
         vis = visible((x, y), [], (w2, h2))
         if vis:
             iy, ix = int(np.rint(y)), int(np.rint(x))
@@ -493,13 +425,12 @@ def test_cutout_visibility(cutout_bank):
                 vis = bool(occ_alpha[iy, ix] < 0.5)
         return vis
 
-    assert occ_alpha[80, 80] > 0.5          # dead centre, solidly under the disk
+    assert occ_alpha[80, 80] > 0.5
     assert geom_visible(80.0, 80.0) is False
 
-    assert occ_alpha[80, 130] == 0.0        # comfortably outside disk radius (36) + feather
+    assert occ_alpha[80, 130] == 0.0
     assert geom_visible(80.0, 130.0) is True
 
-    # feathered edge: disk radius 36 from centre (80,80) -> boundary at x~116
     profile = occ_alpha[80, 100:130]
     assert profile[0] > 0.9
     assert profile[-1] < 0.1
@@ -508,14 +439,6 @@ def test_cutout_visibility(cutout_bank):
 
 
 def test_cutout_stream_discipline(cfg, bg_files, cutout_bank):
-    """cutouts.p forced 0, a bank-missing path, and the real (non-empty)
-    fixture bank must all consume the exact same rng draws inside
-    _apply_cutouts -- the always-draw-the-full-budget invariant. Proven by
-    comparing what a shared rng stream produces AFTER cutouts in each
-    scenario: this sample's holes (drawn immediately after cutouts) and a
-    second sample's board placement pulled off the same continuing stream
-    (standing in for a training loop reading many samples off one
-    Generator)."""
     base = {"max_objects": 3, "scale": [0.08, 0.5]}
     scenarios = {
         "p_zero": {"path": cutout_bank, "p": 0.0, **base},
@@ -538,10 +461,6 @@ def test_cutout_stream_discipline(cfg, bg_files, cutout_bank):
 
 
 def test_cutout_determinism(cfg, bg_files, cutout_bank):
-    """Same seed + fixture bank, twice -> byte-identical images, corners,
-    and cutout placements, each of several seeds. Also confirms objects
-    actually get placed for at least one of them (a smoke check that p=1.0
-    + a non-empty bank isn't silently a no-op)."""
     c = copy.deepcopy(cfg)
     c["synth"]["cutouts"] = {"path": cutout_bank, "p": 1.0, "max_objects": 3, "scale": [0.08, 0.5]}
 
@@ -561,9 +480,6 @@ def test_cutout_determinism(cfg, bg_files, cutout_bank):
 
 
 def test_record_schema_unchanged(cfg, bg_files, cutout_bank):
-    """SD-05 record keys/types are unchanged with cutout occlusion active --
-    the feature only adds to meta (debug-only), never to the training
-    record itself."""
     c = copy.deepcopy(cfg)
     c["synth"]["cutouts"] = {"path": cutout_bank, "p": 1.0, "max_objects": 3, "scale": [0.08, 0.5]}
     rng = np.random.default_rng(99)
@@ -585,13 +501,7 @@ def test_record_schema_unchanged(cfg, bg_files, cutout_bank):
         assert set(c_meta.keys()) == {"file", "bbox"}
 
 
-# --------------------------------------------------------------- Slice B5 --
-
 def _photometric_only(cfg, **on):
-    """cfg["synth"]["photometric"] copy with every *_p gate zeroed except
-    `on` -- isolates one (or a few) photometric step(s) from the rest of
-    the pinned-order set, reusing the real config's ranges for whatever
-    stays on."""
     ph = dict(cfg["synth"]["photometric"])
     for k in ph:
         if k.endswith("_p"):
@@ -601,31 +511,24 @@ def _photometric_only(cfg, **on):
 
 
 def test_contrast_speckle(cfg, bg_files):
-    """Task #12: contrast (blend-about-mean) and multiplicative speckle,
-    inserted after brightness and after the gaussian blur respectively (see
-    _apply_photometric's docstring). Each step's own defining property is
-    checked directly against _apply_photometric (board/background content
-    would otherwise confound "does the mean survive" / "do zeros survive");
-    forced-on vs forced-off and determinism are checked through the full
-    generate_sample path, per the brief."""
     h2, w2 = 64, 64
     work = np.full((h2, w2, 3), 100.0, dtype=np.float32)
-    work[:8, :8] = 0.0  # a true-black patch: speckle's "zero stays zero" probe
+    work[:8, :8] = 0.0
 
     ph_contrast = _photometric_only(cfg, contrast_p=1.0)
     out_c = _apply_photometric(work.copy(), np.random.default_rng(9), ph_contrast, w2, h2)
     mean_relerr = abs(out_c.mean() - work.mean()) / work.mean()
     print("test_contrast_speckle contrast mean-preservation relerr:", mean_relerr)
-    assert mean_relerr < 0.01  # blend-about-mean: m + (work-m)*c leaves work's own mean fixed
+    assert mean_relerr < 0.01
 
     ph_speckle = _photometric_only(cfg, speckle_p=1.0)
     rng_s = np.random.default_rng(10)
     out_s = _apply_photometric(work.copy(), rng_s, ph_speckle, w2, h2)
-    assert np.all(out_s[:8, :8] == 0.0)  # multiplicative: 0 * (1+noise) stays exactly 0
-    assert not np.allclose(out_s[8:, 8:], work[8:, 8:])  # noise actually landed elsewhere
+    assert np.all(out_s[:8, :8] == 0.0)
+    assert not np.allclose(out_s[8:, 8:], work[8:, 8:])
 
     out_s2 = _apply_photometric(work.copy(), np.random.default_rng(10), ph_speckle, w2, h2)
-    assert np.array_equal(out_s, out_s2)  # deterministic under the same seed
+    assert np.array_equal(out_s, out_s2)
 
     c_on = copy.deepcopy(cfg)
     c_on["synth"]["photometric"] = _photometric_only(cfg, contrast_p=1.0, speckle_p=1.0)
@@ -641,16 +544,6 @@ def test_contrast_speckle(cfg, bg_files):
 
 
 def test_prefilter(cfg, bg_files):
-    """Task #7: anti-alias prefilter, applied to `matched` strictly after
-    H/p_img's inputs are already fixed (see _composite_board) so geometry
-    can't be touched -- only pixels. s=16 (SQ=render_res//5=96, comfortably
-    inside the s < SQ minify regime): on vs off differ, RECORDED CORNERS
-    stay byte-identical, and the on-board Laplacian variance (a marker-
-    module aliasing proxy) drops with the prefilter on. s=120 (>= SQ): the
-    `s < SQ` guard alone makes it a no-op regardless of `enabled`, so on
-    and off are byte-identical. Geometry pinned (theta/shear/tx/ty/tilt=0)
-    so the board sits centred and axis-aligned -- isolates the prefilter
-    from the independent randomness of placement."""
     fixed_geom = {"theta": 0.0, "shear_x": 0.0, "shear_y": 0.0, "tx": 0.0, "ty": 0.0, "tilt": 0.0}
 
     def sample(prefilter_enabled, s, seed):
@@ -681,16 +574,6 @@ def test_prefilter(cfg, bg_files):
 
 
 def test_generic_crops():
-    """Task #6: make_generic_crop in isolation. d stays within the 64x64@8x
-    support; cornerSubPix on the CLEAN (roughen=False) crop recovers the
-    analytic corner to a measured, honest tolerance -- NOT the originally
-    hoped-for 0.15/0.5px (see the B5 report: a naive flat-sector "pie"
-    corner measured up to ~6px of error; a 35deg angle-guard plus 16x
-    supersampled anti-aliasing, both justified by the "only corner-like
-    point" invariant in make_generic_crop's own docstring, bring the
-    measured max at this seed down to <1px, still not the original hope,
-    so the gate below reflects what is actually achieved, not assumed);
-    2-4 dominant (>=14px-of-576) gray plateaus; determinism."""
     rng = np.random.default_rng(2026)
     errs = []
     for _ in range(200):
@@ -721,12 +604,6 @@ def test_generic_crops():
 
 
 def test_generic_blend_off_identical(cfg):
-    """Task #6: refiner_generic_frac's off-path is byte-identical whether
-    the key is 0.0 or absent entirely (CRITICAL: _maybe_replace_generic's
-    coin draw must not fire either way -- proven directly in the second
-    half below, and here through RefinerVal end to end); frac=0.5 replaces
-    close to half of the crops (chi-square-loose bound) and is itself
-    deterministic under a fixed seed."""
     c_zero = copy.deepcopy(cfg)
     c_zero["synth"]["refiner_generic_frac"] = 0.0
     c_absent = copy.deepcopy(cfg)
@@ -748,10 +625,10 @@ def test_generic_blend_off_identical(cfg):
     expected = n / 2
     chi2 = (k - expected) ** 2 / expected + ((n - k) - expected) ** 2 / expected
     print(f"test_generic_blend_off_identical frac=0.5 replaced {k}/{n}, chi2={chi2:.3f}")
-    assert chi2 < 20.0  # loose: chi2(1) critical value at alpha=1e-5 is ~19.5
+    assert chi2 < 20.0
 
     rng_a = np.random.default_rng(303)
     rng_b = np.random.default_rng(303)
     seq_a = [_maybe_replace_generic(dummy, rng_a, 0.5) is not dummy for _ in range(50)]
     seq_b = [_maybe_replace_generic(dummy, rng_b, 0.5) is not dummy for _ in range(50)]
-    assert seq_a == seq_b  # deterministic under the same seed
+    assert seq_a == seq_b

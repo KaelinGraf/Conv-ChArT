@@ -1,21 +1,7 @@
-"""Real-frame training data: harvested video pseudo-labels (dcc.video) as detector samples, mixed
-into the synthetic stream at a capped fraction (cfg["real"]["frac"]).
-
-Why the synthetic stream stays in the mix: a video covers one camera, one board and the
-conditions that happened to be filmed. Synthetic samples keep every other condition the model
-was trained for in front of it, and that fraction is the cap on how far a real clip can pull the
-model -- the confirmation-bias guard self-training cannot do without. Any image directory serves
-as the background corpus (dcc.synth.list_backgrounds); it does not have to be COCO.
-
-A real record's labels come with what they do NOT know, and the masks carry it (dcc.losses
-mask=, 0 = no gradient):
-  visible None   position known, observability not -> a disc around it is ignored in the heatmap,
-                 and that corner's own class channel is ignored near it (other channels stay
-                 negative: no OTHER corner is there either way)
-  sigma > tight  the corner is real but its exact pixel is not -> the ring of pixels around the
-                 positive is ignored, so a one-pixel label error is not taught as "the true pixel is
-                 a negative" (the release heatmaps are one-hot BCE, where that is a full-weight error)
-Every positive keeps its own pixel and cell whatever overlaps it.
+"""Real-frame training data. MixedStream(cfg, seed) mixes harvested frames (cfg["real"]["records"]) into
+the synthetic stream at cfg["real"]["frac"], with targets, ignore masks and augmentation, including
+darkening calibrated to each clip's own noise. tools/train_detector.py uses it when the config has a
+real: block.
 """
 import json
 from pathlib import Path
@@ -31,32 +17,26 @@ from dcc.synth import _apply_photometric, generate_sample, list_backgrounds
 from dcc.targets import render_class_targets, render_heatmap
 
 REAL_DEFAULTS = {
-    "frac": 0.3,              # fraction of samples drawn from real frames
-    "darken_p": 0.4,          # darken into the clip's OWN dark regime with its OWN noise (see darken)
-    "darken_gain_min": None,  # None: from the clip (its darkest board level / its median bright one)
-    "darken_hard_frac": 0.5,  # of darkened draws, the share taken from [gain_min, 4 gain_min]: log-uniform over the
-                              #   whole range puts ~6% there, and that band is where the model fails
-    "photometric_p": 0.3,     # else dcc.synth's own photometric pack, applied to a real frame
-    "darken_synthetic_p": 0.0,  # darken SYNTHETIC samples the same way (the video calibrating the simulator):
-                                #   the clip shows how dark and how noisy the camera gets; synthetic scenes
-                                #   supply the diversity one clip lacks
-    "geometric_p": 0.5,       # random rotation / scale / shift (never a flip: a mirrored board is another board)
+    "frac": 0.3,
+    "darken_p": 0.4,
+    "darken_gain_min": None,
+    "darken_hard_frac": 0.5,
+    "photometric_p": 0.3,
+    "darken_synthetic_p": 0.0,
+    "geometric_p": 0.5,
     "rot_deg": 20.0,
     "scale": [0.8, 1.25],
     "translate_frac": 0.08,
-    "unknown_radius_px": 3.0,  # + 3 sigma: the ignored disc around an unknown corner
-    "tight_sigma": 0.15,       # input px; a positive this certain is a strict one-hot target
+    "unknown_radius_px": 3.0,
+    "tight_sigma": 0.15,
 }
 
 
 def ring_radius(sigma, tight=0.15):
-    """Ignored ring around a positive, by its label sigma (input px)."""
     return 0 if sigma <= tight else 1 if sigma <= 0.5 else 2
 
 
 def render_real_targets(cfg, image, corners, rcfg=None):
-    """Detector targets for one real frame plus the masks (uint8, 1 = trained) that carry each
-    label's uncertainty. Same keys as dcc.dataset._render_detector_targets, plus hm_mask/cls_mask."""
     rcfg = {**REAL_DEFAULTS, **(rcfg or {})}
     h, w = image.shape
     n_cls = n_corners(cfg.get("board"))
@@ -81,10 +61,10 @@ def render_real_targets(cfg, image, corners, rcfg=None):
             if r:
                 jx, jy = int(np.rint(x)), int(np.rint(y))
                 hm_mask[max(0, jy - r):jy + r + 1, max(0, jx - r):jx + r + 1] = 0
-            if c["sigma"] > 0.5:                    # near a cell edge the forced cell itself may be off by one
+            if c["sigma"] > 0.5:
                 jx, jy = int(np.floor((x + 0.5) / 4)), int(np.floor((y + 0.5) / 4))
                 cls_mask[k, max(0, jy - 1):jy + 2, max(0, jx - 1):jx + 2] = 0
-    for c in pos:                                   # a positive always keeps its own pixel and cell
+    for c in pos:
         jx, jy = int(np.rint(c["x"])), int(np.rint(c["y"]))
         if 0 <= jx < w and 0 <= jy < h:
             hm_mask[jy, jx] = 1
@@ -107,8 +87,6 @@ def _zero_disc(mask, x, y, R):
 
 
 def darken_gain_min(noise, rcfg):
-    """Lowest gain the darkening draws: the clip's own range (its darkest board level over its median
-    bright one) unless configured; 0.1 for a clip with no dark frames to calibrate from."""
     if rcfg.get("darken_gain_min") is not None:
         return float(rcfg["darken_gain_min"])
     lo, hi = (noise or {}).get("board_level_p5"), (noise or {}).get("board_level_bright_median")
@@ -118,15 +96,6 @@ def darken_gain_min(noise, rcfg):
 
 
 def darken(image, rng, noise, gain_min, hard_frac=0.0):
-    """A real frame re-exposed at gain g ~ logU(gain_min, 1), with the clip's own Poisson-Gaussian noise
-    (dcc.video.noise_model: var = shot * level + read_var) at the new level, then quantised as the
-    camera quantises. The noise ADDED is the target variance minus what scaling leaves of the frame's
-    own noise, so g = 1 is (statistically) the frame itself.
-
-    WHY: a clip's dark stretch is one board pose sequence over one background -- measured on a synthetic
-    clip, fine-tuning on it alone raised dark recall on the clip itself from 19% to 72% and on a held-out
-    clip not at all (12% -> 12.5%): it memorised. Every bright frame, re-exposed into the same regime,
-    carries the poses and backgrounds the dark stretch lacks."""
     hi = min(1.0, 4.0 * gain_min) if rng.random() < hard_frac else 1.0
     g = float(np.exp(rng.uniform(np.log(gain_min), np.log(hi))))
     I = image.astype(np.float64)
@@ -137,13 +106,6 @@ def darken(image, rng, noise, gain_min, hard_frac=0.0):
 
 
 def augment_real(image, corners, outline, rng, cfg, rcfg=None, noise=None):
-    """Augment one real frame; labels move with the pixels. Geometric: rotation/scale/shift about the
-    centre (replicated border -- a reflected border would paint a MIRRORED board, which is a different
-    board). Then ONE of: darkening into the clip's own dark regime (darken, needs the clip's noise model),
-    or dcc.synth._apply_photometric -- the synthetic stream's own pack, with the board mask from the
-    record's outline so its board-anchored steps fire on the real board (a droplet that registers an
-    occluding hole turns the corners under it to unknown) -- or neither. Never both: each brings its own
-    noise. Darkened corners keep their labels, as degraded corners do in the synthetic stream."""
     rcfg = {**REAL_DEFAULTS, **(rcfg or {})}
     h, w = image.shape
     corners = [dict(c) for c in corners]
@@ -182,10 +144,6 @@ def augment_real(image, corners, outline, rng, cfg, rcfg=None, noise=None):
 
 
 class RealFrames:
-    """Every record of one or more harvest directories (dcc.video.save_harvest), images memory-mapped.
-    Build it inside the worker process: a memmap pickled through a spawn DataLoader arrives as a full
-    in-memory copy per worker."""
-
     def __init__(self, dirs):
         self.items = []
         for d in ([dirs] if isinstance(dirs, (str, Path)) else dirs):
@@ -200,16 +158,11 @@ class RealFrames:
         return len(self.items)
 
     def __getitem__(self, i):
-        """(image, record, the clip's noise model or None)."""
         imgs, j, rec, noise = self.items[i]
         return np.array(imgs[j]), rec, noise
 
 
 class MixedStream(IterableDataset):
-    """dcc.dataset.SynthStream's detector stream with real frames mixed in: one explicit-Generator coin
-    per sample against real.frac (determinism contract as SynthStream: rng = default_rng([seed, worker])).
-    Every sample carries hm_mask/cls_mask -- all ones for synthetic samples, whose labels are exact."""
-
     def __init__(self, cfg, seed=None):
         self.cfg, self.seed = cfg, seed
         self.rcfg = {**REAL_DEFAULTS, **cfg["real"]}
@@ -222,7 +175,7 @@ class MixedStream(IterableDataset):
         real = RealFrames(self.rcfg["records"])
         assert len(real), f"real.records {self.rcfg['records']} hold no frames"
         noises = [it[3] for it in real.items if it[3]]
-        syn_noise = noises[0] if noises else None      # first clip's camera model for the synthetic stream
+        syn_noise = noises[0] if noises else None
         bg_files = list_backgrounds(self.cfg["synth"]["backgrounds"]) if frac < 1.0 else []
         assert frac >= 1.0 or bg_files, f"no background images under {self.cfg['synth']['backgrounds']!r}"
         W, H = self.cfg["input_size"]

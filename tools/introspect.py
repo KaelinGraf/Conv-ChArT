@@ -1,11 +1,6 @@
-"""Introspection & visualisation CLI for the Conv-ChArT detector (conference
-demo). Seven presentation-grade panels rendered from a single forward pass
-over one SynthVal sample or a raw image: pipeline end-to-end, 3D heatmap
-landscape, bottleneck-attention maps, decoder skip gates, a gate
-selectivity probe (skip/conditioning/gated/suppressed against a GT
-board-region mask), an effective-receptive-field probe, and encoder feature
-maps. No --ckpt -> an UNTRAINED DetectorNet, flagged on every figure title.
-Argparse runs before any heavy import so --help never needs torch/dcc/matplotlib.
+"""Introspection panels for a detector.
+    PYTHONPATH= python tools/introspect.py --ckpt C [--refiner-ckpt R] --index 7 --out introspect_out/ [--panels a,b,...]
+Without --ckpt the panels show an untrained network.
 """
 import argparse
 import sys
@@ -41,12 +36,7 @@ def build_parser():
     return p
 
 
-# --------------------------------------------------------------------------- shared helpers
-
 def _load_ckpt(model, path, device):
-    """torch.load; accepts a raw state_dict OR a trainer ckpt dict with
-    'model'/'ema' keys (ema preferred). weights_only=False: these are the
-    user's own local checkpoints, not untrusted downloads."""
     import torch
     if not path:
         return False
@@ -67,10 +57,6 @@ def _suptitle(ckpt_path, tag, trained):
 
 
 def _sample(cfg, args):
-    """(image uint8 (H,W), tag, record|None) -- tag is filename-safe, used in
-    every out path; record is generate_sample's own dict (GT "corners" etc),
-    None for a raw --image file. Every panel but gateprobe ignores the 3rd
-    value; gateprobe's board-region mask needs it."""
     import cv2
     if args.image:
         img = cv2.imread(args.image, cv2.IMREAD_GRAYSCALE)
@@ -86,7 +72,6 @@ def _sample(cfg, args):
 
 
 def _peak_or_query(args, prob_hm_2d):
-    """(x, y) float: --query-xy if given, else the strongest heatmap peak."""
     import numpy as np
     if args.query_xy is not None:
         return args.query_xy
@@ -95,9 +80,6 @@ def _peak_or_query(args, prob_hm_2d):
 
 
 def _peaks_only(prob_hm_2d, tau=0.3):
-    """Peak decode only (the first stage of the inference pipeline),
-    inlined here: 3x3 maxpool-equality peaks on sigmoid(hm). Used only when
-    dcc.pipeline hasn't landed (no refine/ID/pose in that case)."""
     import torch
     import torch.nn.functional as F
     t = torch.from_numpy(prob_hm_2d)[None, None]
@@ -107,18 +89,8 @@ def _peaks_only(prob_hm_2d, tau=0.3):
 
 
 def _forward_hooked(model, x):
-    """Single no_grad forward pass, capturing e1..e5 outputs, each attention
-    block's input (pre-n1), and gate3/gate4's exact call args -- so
-    gate.alpha(*args, **kwargs) afterward replays the same computation
-    forward used internally (the mechanism the attention/gates panel briefs
-    name explicitly). Returns (hm_logits, cls_logits, feats, block_inputs,
-    gate_args)."""
     import torch
     feats, blk_in, gate_args, handles = {}, [], {}, []
-    # decoder stages hooked alongside the encoder: d3 is where corner structure
-    # first appears (the stage that fuses the attention output with the gated
-    # skip), so the decoder side is the more informative half of the features
-    # panel, not an afterthought
     for n in ("e1", "e2", "e3", "e4", "e5", "d4", "d3", "d2", "d1"):
         mod = getattr(model, n, None)
         if mod is not None:
@@ -127,13 +99,6 @@ def _forward_hooked(model, x):
         handles.append(blk.register_forward_pre_hook(
             lambda m, a, kw: blk_in.append((a[0] if a else next(iter(kw.values()))).detach()),
             with_kwargs=True))
-    # POST-ATTENTION bottleneck: forward() reuses the name `z` for both the e4/e5
-    # output and the attention result, so the e4 hook captures the PRE-attention map
-    # only. self.norm is the last op of the attention path, so its output IS the
-    # post-attention bottleneck -- and the e4 -> attn_out -> d3 gap is exactly where
-    # corner structure has been observed to appear. Stored reshaped to (C,h,w) using
-    # the deepest encoder stage's own spatial dims (attention preserves them); the e4
-    # hook has already fired by this point, so that shape is available here.
     norm_mod = getattr(model, "norm", None)
     if norm_mod is not None:
         def _norm_hook(m, i, o):
@@ -184,8 +149,6 @@ def _finish(fig, path, dpi, show, rect=None):
         plt.close(fig)
 
 
-# --------------------------------------------------------------------------- panels
-
 def panel_pipeline(model, x, image, cfg, args, out, tag, suptitle, dpi, show, device):
     import numpy as np
     import torch
@@ -199,7 +162,7 @@ def panel_pipeline(model, x, image, cfg, args, out, tag, suptitle, dpi, show, de
         hm_logits, cls_logits = model(x)
     prob_hm = torch.sigmoid(hm_logits)[0, 0].cpu().numpy()
     prob_cls = torch.sigmoid(cls_logits)[0].cpu().numpy()
-    cls_up = np.repeat(np.repeat(prob_cls.max(axis=0), 4, axis=0), 4, axis=1)   # cell j -> px 4j..4j+3
+    cls_up = np.repeat(np.repeat(prob_cls.max(axis=0), 4, axis=0), 4, axis=1)
 
     refiner, _ = _build_module(Refiner, args.refiner_ckpt, device)
     K = np.array([[1.05 * W, 0, W / 2], [0, 1.05 * W, H / 2], [0, 0, 1]])
@@ -272,12 +235,6 @@ def panel_heatmap3d(model, x, image, args, out, tag, suptitle, dpi, show, make_g
 
     if make_gif:
         from matplotlib.animation import FuncAnimation, PillowWriter
-        # A 72-frame rotation re-rasterises the whole 3D surface every frame:
-        # at the static plot's stride=2 (~480k polygons at this config's
-        # 1600x1200) that hangs/segfaults in mplot3d's pure-Python renderer
-        # (confirmed empirically -- fine as a single frame, not x72). Rebuild
-        # ax_full at a much coarser stride (~7.5k polygons) just for the
-        # animation; the static PNG above already has full detail saved.
         ax_full.clear()
         viz.surface3d(ax_full, prob, stride=16)
         ax_full.set_title("full frame (rotating)", fontsize=10)
@@ -301,7 +258,7 @@ def panel_attention(model, x, image, args, out, tag, suptitle, dpi, show):
         return
     prob = torch.sigmoid(hm_logits)[0, 0].cpu().numpy()
     qx, qy = _peak_or_query(args, prob)
-    div = model.attend_div   # grid stride: 16 native, 8 for the attend_div=8 variant
+    div = model.attend_div
     gh, gw = H // div, W // div
     tok = int(np.clip(qy // div, 0, gh - 1)) * gw + int(np.clip(qx // div, 0, gw - 1))
 
@@ -312,7 +269,7 @@ def panel_attention(model, x, image, args, out, tag, suptitle, dpi, show):
         with torch.no_grad():
             q, k, _ = blk.qkv_heads(blk.n1(x_in))
             A = torch.softmax((q.float() @ k.float().transpose(-2, -1)) / q.shape[-1] ** 0.5, dim=-1)
-        a = A[0, :, tok, :].cpu().numpy()                    # (heads, T)
+        a = A[0, :, tok, :].cpu().numpy()
         a_mean = a.mean(axis=0).reshape(gh, gw)
         ent = float(-(a_mean * np.log(a_mean + 1e-12)).sum())
         _show_overlay(fig.add_subplot(gs[2 * bi:2 * bi + 2, 0]), image, a_mean,
@@ -355,14 +312,6 @@ def panel_gates(model, x, image, args, out, tag, suptitle, dpi, show):
 
 
 def _swap_donor_gate_args(model, cfg, args, device):
-    """A second, unrelated frame's gate_args -- the conditioning-ablation
-    swap test (gate-actor Task C variant 4): wrong-image `g` (conditioning),
-    right-image `skip`, is the cleanest probe of whether alpha actually
-    depends on its conditioning signal. Always drawn from SynthVal (bit-
-    identical, board present with high probability) regardless of whether
-    the main sample came from --image, so the swap is available even for a
-    raw-file invocation. Donor index is offset from --index (or 0) by a
-    third of val_size so it's reliably a different scene, not adjacent."""
     import torch
     from dcc.dataset import SynthVal
     val_size = cfg["synth"]["val_size"]
@@ -375,29 +324,12 @@ def _swap_donor_gate_args(model, cfg, args, device):
 
 
 def panel_gate_probe(model, x, image, out, tag, suptitle, dpi, show, corners=None, donor_gate_args=None):
-    """Selectivity probe (Kaelin 2026-07-28): does an AttnGate's alpha
-    actually vary spatially with content, or does it just attenuate the
-    whole skip uniformly? panel_gates only shows alpha itself; this adds the
-    skip (s3) and conditioning signal (z) alpha is computed FROM, the gated
-    skip (s3*alpha) and what got thrown away (s3*(1-alpha)), and an alpha
-    histogram against the pass-through init value (sigmoid(3)=0.9526). skip
-    and z are aggregated over channels two ways -- channel-mean(abs) AND
-    channel-max(abs), since they tell different stories (mean can hide a few
-    strongly-selective channels; max can hide that most channels are flat).
-    `corners` (GT {"x","y"} points, generated frames only) additionally
-    builds a convex-hull board-region mask and reports mean alpha inside vs
-    outside it -- printed, and marked on the histogram -- the quantitative
-    read on whether alpha tracks the board or is diffuse. `donor_gate_args`
-    (see _swap_donor_gate_args) adds a 5th column: baseline alpha vs
-    swapped-context alpha side by side, plus their |diff| map and
-    mean-abs-change/Pearson-r -- the single most direct image for "does the
-    gate use conditioning, or only the skip.\""""
     import numpy as np
     import cv2
     import torch
     import matplotlib.pyplot as plt
 
-    INIT_ALPHA = 0.9526   # sigmoid(3.0), AttnGate's pass-through init (dcc/model.py's AttnGate docstring)
+    INIT_ALPHA = 0.9526
     H, W = image.shape
     _, _, _, _, gate_args = _forward_hooked(model, x)
     names = [n for n in ("gate3", "gate4") if n in gate_args]
@@ -406,7 +338,6 @@ def panel_gate_probe(model, x, image, out, tag, suptitle, dpi, show, corners=Non
         return
 
     def chan_reduce(feat):
-        """(channel-mean(abs), channel-max(abs)) 2D maps from a (1,C,h,w) tensor."""
         f = feat[0].abs()
         return f.mean(dim=0).cpu().numpy(), f.max(dim=0).values.cpu().numpy()
 
@@ -418,7 +349,7 @@ def panel_gate_probe(model, x, image, out, tag, suptitle, dpi, show, corners=Non
         a, kw = gate_args[n]
         skip, g = a[0], a[1]
         with torch.no_grad():
-            alpha = getattr(model, n).alpha(*a, **kw)[0, 0]   # (h4, w4) -- skip's own res, pre display-upsample
+            alpha = getattr(model, n).alpha(*a, **kw)[0, 0]
         gated, suppressed = skip * alpha, skip * (1 - alpha)
         alpha_np = alpha.cpu().numpy()
         alpha_up = up(alpha_np)
@@ -473,29 +404,12 @@ def panel_gate_probe(model, x, image, out, tag, suptitle, dpi, show, corners=Non
 
 
 def panel_gate_flow(model, x, image, out, tag, suptitle, dpi, show, corners=None):
-    """Minimal, explicitly-labelled view of WHAT THE DECODER ACTUALLY EATS
-    (Kaelin 2026-07-28, asked for after panel_gate_probe proved too busy):
-    exactly the four maps on the path into d3's convolution, plus the alpha
-    histogram. Deliberately NOT the full diagnostic -- panel_gate_probe
-    keeps the suppressed-content/channel-max/swap columns for when the
-    question is "is the gate selective"; this one answers "what is
-    concatenated, and in what proportion".
-
-    The concat site is dcc/model.py:248 -- `d3(cat([up2(z), gate3(s3, z)]))`
-    -- so the panels are, left to right, the network input; the raw encoder
-    skip s3 BEFORE gating; the upsampled attention/bottleneck output up2(z),
-    which is the other half of the concat; and the GATED skip s3*alpha,
-    which is what physically enters the concat. Every feature map is
-    channel-mean(|.|) over its channels (one reduction, stated on the axis,
-    rather than probe's two) and shown at its own native resolution with the
-    shape in the title, so the H/4-vs-H/8 asymmetry is visible rather than
-    hidden by a common resize."""
     import numpy as np
     import cv2
     import torch
     import matplotlib.pyplot as plt
 
-    INIT_ALPHA = 0.9526   # sigmoid(3.0), AttnGate's pass-through init
+    INIT_ALPHA = 0.9526
     H, W = image.shape
     _, _, _, _, gate_args = _forward_hooked(model, x)
     names = [n for n in ("gate3", "gate4") if n in gate_args]
@@ -513,11 +427,6 @@ def panel_gate_flow(model, x, image, out, tag, suptitle, dpi, show, corners=None
             alpha = getattr(model, n).alpha(*a, **kw)[0, 0]
         gated = skip * alpha
         alpha_np = alpha.cpu().numpy()
-        # The ACTUAL tensor d3 consumes: cat([up2(z), s3*alpha], dim=1) -- dcc/model.py:249.
-        # Panels 2-4 each show one ADDITIVE contribution; this is the fused result, and the
-        # channel-mean over it is weighted by the 2:1 channel split (256 from z vs 128 from
-        # the gated skip), which is stated in the title so the z-dominance is read as
-        # arithmetic rather than as a finding.
         from dcc.model import up2 as _up2
         concat = torch.cat([_up2(g), gated], 1)
         sk, gz, gt, cc = cmean(skip), cmean(g), cmean(gated), cmean(concat)
@@ -535,11 +444,6 @@ def panel_gate_flow(model, x, image, out, tag, suptitle, dpi, show, corners=None
             _no_ticks(ax, title)
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-        # SLIDE VARIANT: the four maps on the concat path and nothing else -- no input
-        # thumbnail, no alpha histogram. The full six-panel figure is 31 in wide and its
-        # individual panels are unreadable projected; these four ARE the story (Kaelin,
-        # 2026-07-29: "e4, the attention map, the result of the gate convolution, and the
-        # channel-mean result of the concatenation").
         figs, axs = plt.subplots(1, 4, figsize=(19.2, 5.2), squeeze=False)
         for ax, m, title in (
             (axs[0, 0], sk, f"1. ENCODER SKIP  $s_3$  (pre-gate)\n{sh(skip)} @ H/4"),
@@ -576,20 +480,6 @@ def panel_gate_flow(model, x, image, out, tag, suptitle, dpi, show, corners=None
 
 
 def panel_gate_ablation(model, x, image, out, tag, suptitle, dpi, show, corners=None, donor_gate_args=None):
-    """Conditioning-ablation (Kaelin/team-lead Task C, 2026-07-28): does
-    alpha actually depend on its conditioning signal g, or would skip s3
-    alone produce the same mask -- i.e. has the gate degenerated into a
-    skip-driven saliency filter that ignores global board context? Holds
-    skip FIXED and degrades g three ways: spatial-mean (kills spatial/global
-    structure, keeps per-channel magnitude), zeroed (W_g contributes only
-    its bias), swapped (a DIFFERENT frame's own g entirely -- the cleanest
-    single test; needs donor_gate_args, see _swap_donor_gate_args). Also
-    splits gate.wx(skip) vs gate.wg(g) BEFORE they're summed+ReLU'd: if
-    ||wg(g)|| << ||wx(skip)|| the conditioning is numerically negligible
-    regardless of what the alpha ablations show -- a one-number answer to
-    the same question. Row 0 is each variant's alpha (fixed 0-1 scale,
-    board in/out/ratio in the title); row 1 is |baseline - variant| against
-    baseline (magnitude balance as text under baseline itself)."""
     import numpy as np
     import cv2
     import torch
@@ -660,9 +550,6 @@ def panel_gate_ablation(model, x, image, out, tag, suptitle, dpi, show, corners=
 
 
 def _erf_grad(m, x, args):
-    """Unit-gradient effective-receptive-field probe: backward from one
-    class-head logit (the strongest ID, or --query-xy's cell) to the input.
-    Returns (log10(|grad|+eps) (H,W), the (x,y) point that was targeted)."""
     import numpy as np
     xin = x.clone().requires_grad_(True)
     hm_logits, cls_logits = m(xin)
@@ -673,7 +560,7 @@ def _erf_grad(m, x, args):
         ch = int(cls_logits[0, :, cy, cx].argmax())
     else:
         ch, cy, cx = np.unravel_index(int(cls_logits[0].argmax()), cls_logits.shape[1:])
-        qx, qy = cx * 4.0 + 1.5, cy * 4.0 + 1.5   # cell-centre in input px (targets.py convention)
+        qx, qy = cx * 4.0 + 1.5, cy * 4.0 + 1.5
     cls_logits[0, int(ch), int(cy), int(cx)].backward()
     grad = xin.grad[0, 0].detach().cpu().numpy()
     return np.log10(np.abs(grad) + 1e-12), (float(qx), float(qy))
@@ -698,34 +585,6 @@ def panel_erf(model, x, image, args, out, tag, suptitle, dpi, show, model_b=None
 
 
 def panel_features(model, x, image, out, tag, suptitle, dpi, show, k=3, corners=None):
-    """Encoder features as INDIVIDUAL CHANNELS, never a channel reduction.
-
-    Kaelin, 2026-07-29: "do NOT sum or average convolution over channels ...
-    averaging destroys the entire point of the visualisation." He is right, and
-    for two separate reasons. A conv channel is a FEATURE DETECTOR -- one channel
-    fires on a polarity of edge, another on checker texture -- and averaging
-    |activation| over 64 of them yields an "energy" map that says only WHERE the
-    layer is busy, never WHAT it found. Worse here specifically: this network is
-    known to carry sign-flipped channel pairs (the polarity-invariance mechanism
-    found 2026-07-28), so a channel and its inverse CANCEL under a signed mean
-    and are made indistinguishable under an abs mean -- the averaging destroys
-    exactly the structure that investigation established.
-
-    So: pick the k most spatially STRUCTURED channels per stage (ranked by the
-    activation map's spatial std -- a flat or dead channel ranks last, a channel
-    with strong selective response ranks first) and draw each on its own, SIGNED,
-    on symmetric limits so polarity survives rather than being folded away by abs().
-
-    Colormap is viridis on symmetric limits (Kaelin 2026-07-29: the red/white
-    diverging map "is visually jarring", the blue-yellow scheme reads better).
-    Sign is still legible because the limits are symmetric: -v is dark blue/purple,
-    0 lands mid-green, +v is yellow. So this is a presentation choice, not a loss
-    of information.
-
-    slide=True emits the 16:9 variant instead: the grid is TRANSPOSED (stages run
-    across, channels down) because a stages-as-rows figure is inherently portrait
-    and unusable on a slide, and k drops so the cells stay large enough to read
-    from the back of a room."""
     import cv2
     import matplotlib.pyplot as plt
     import numpy as np
@@ -737,22 +596,9 @@ def panel_features(model, x, image, out, tag, suptitle, dpi, show, k=3, corners=
     if not names:
         print("SKIP features: no e1..e5 / d1..d4 stages found")
         return
-    # RANK BY BOARD CONTRAST, NOT SPATIAL SD, whenever ground-truth corners are available.
-    # Spatial sd is the wrong statistic when the object of interest is small: at val2650 the
-    # board covers 3.5% of the frame, so a channel that merely varies a lot over background
-    # texture outranks one that responds specifically to the board. Measured on L's attn_out
-    # (256 ch): the three top-sd channels had board contrasts of only +0.64/+0.68/+0.22 sd,
-    # while the most board-selective reached +-2.50 -- and 141/256 channels exceeded 0.5 sd.
-    # The strip therefore showed "busy over the background", which read as the attention
-    # ignoring the board when in fact it is strongly selective for it (Kaelin, 2026-07-30).
-    # Contrast is signed-magnitude ranked: BOTH polarities are informative, because this
-    # network carries sign-flipped channel pairs (polarity-invariance mechanism, 2026-07-28)
-    # and M -- which has no XSA -- splits 48 positive / 48 negative.
     gt = np.array([[c["x"], c["y"]] for c in (corners or []) if c.get("visible", True)],
                   dtype=np.float32)
     def board_mask(h, w):
-        """Convex hull of the visible INNER corners at this stage's resolution, dilated one
-        cell: the inner-corner hull understates the board by half a square on every side."""
         if len(gt) < 3:
             return None
         hull = cv2.convexHull((gt / (W / w)).astype(np.float32))
@@ -762,7 +608,7 @@ def panel_features(model, x, image, out, tag, suptitle, dpi, show, k=3, corners=
 
     picks, label = {}, {"attn_out": "POST-ATTN"}
     for n in names:
-        f = feats[n][0].cpu().numpy()                      # (C, h, w), SIGNED
+        f = feats[n][0].cpu().numpy()
         std = f.reshape(len(f), -1).std(axis=1)
         mk = board_mask(*f.shape[1:])
         if mk is not None and mk.any() and (~mk).any():
@@ -781,23 +627,11 @@ def panel_features(model, x, image, out, tag, suptitle, dpi, show, k=3, corners=
 
     def draw(ax, n, ch, std, f, fs, con=None):
         m = cv2.resize(f[ch], (W, H), interpolation=cv2.INTER_LINEAR)
-        # PER-PANEL ROBUST LIMITS, not symmetric-about-zero. Measured on the L checkpoint,
-        # val2650: every conv stage is POST-ReLU (min exactly 0.000, median ~0), while
-        # attn_out is the one genuinely signed stage -- range [-3.465, +1.852], median
-        # -2.058. Under the old vmin=-|max|, vmax=+|max| the conv medians landed at 0.50
-        # of the ramp (teal, correct) but attn_out's landed at 0.203 -- dark purple -- so
-        # the attention panels rendered as flat/unlit and looked dead. They were not: their
-        # spatial sd (0.68, 0.49) sits mid-range against every other stage.
-        # The symmetric convention was ALSO inert for the ReLU'd stages, which have no
-        # negative values at all, so it spent half the colour range on an empty half.
-        # p2/p98 clip instead: outlier-robust, and each panel spends its full ramp on the
-        # values it actually contains. Zero no longer pins to mid-green, so the colour bar
-        # is per-panel relative -- stated in the suptitle, since it is a real caveat.
         lo, hi = (float(np.percentile(m, 2)), float(np.percentile(m, 98)))
         if float(m.min()) >= 0.0:
-            lo = 0.0                                       # ReLU'd: anchor at true zero
+            lo = 0.0
         if hi <= lo:
-            hi = lo + 1e-6                                 # constant map: avoid a zero span
+            hi = lo + 1e-6
         ax.imshow(m, cmap="viridis", vmin=lo, vmax=hi)
         stat = f"sd={std[ch]:.3f}" if con is None else f"board {con[ch]:+.2f} sd"
         ax.set_title(f"{label.get(n, n)}  ch {ch}   {stat}", fontsize=fs)
@@ -823,8 +657,6 @@ def panel_features(model, x, image, out, tag, suptitle, dpi, show, k=3, corners=
             fontsize=11 if slide else 10)
         _finish(fig, out / (f"features_slide_{tag}.png" if slide else f"features_{tag}.png"), dpi, show)
 
-
-# --------------------------------------------------------------------------- main
 
 def main():
     parser = build_parser()

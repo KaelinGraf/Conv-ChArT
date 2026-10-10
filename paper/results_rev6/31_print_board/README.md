@@ -7,7 +7,7 @@ it's the right size?"
 release tier): a cv2 `CharucoBoard`, 5x5 squares, `DICT_5X5_50` markers with ids 0-11 in raster order, marker/square
 ratio 0.7, cv2 4.10 non-legacy pattern (top-left square black, markers in the white squares), 16 inner corners.
 `board.square_length_m` is null: the model has no physical size, it works on the square's apparent size in the
-640x480 input (measured bands in `17_range/working_range.json`: core 32-128 px, usable 16-128, degraded 10-160).
+640x480 input (882k release sweep: recall >= 0.907 and ID >= 0.970 over s = 16-128 px; `17_range/working_range_REL882.json`).
 
 **Files** (`tools/print_board.py --square-mm 24 --page A4`, defaults):
 - `DICT_5X5_50_5x5_24mm.pdf` -- A4, the board at exactly 24 mm per square (120 mm edge, 16.8 mm markers), a
@@ -21,6 +21,5 @@ expected 72.00), i.e. 24.003 mm per square and a 120.02 mm board edge; page size
 
 **Choosing the size**: `tools/working_range.py --board-mm <edge>` turns an edge length into standoff ranges for
 the See3CAM_20CUG (OV2311, 640x480 input) per lens from the measured scale sweep; the banked 120 mm answer is
-`17_range/working_range.json` (core band: 3 mm lens 0.08-0.34 m, 6 mm 0.15-0.60 m, 8 mm 0.20-0.80 m, 12 mm
-0.30-1.20 m; range scales linearly with the edge). Whatever edge is printed, put `square_length_m: <edge/5 in m>`
+`17_range/working_range_REL882.json` (882k release, s = 16-128 px: 3.36 mm lens 0.084-0.67 m, 4 mm 0.10-0.80 m, 6 mm 0.15-1.20 m; 8 and 12 mm lie outside the trained lens envelope of 3.4-6.7 mm; range scales linearly with the edge). Whatever edge is printed, put `square_length_m: <edge/5 in m>`
 in the deployment config's `board:` so `dcc/pipeline.py` reports translation in metres (default 1.0 = board squares).

@@ -20,7 +20,12 @@ under `paper/results_rev6/` (abbreviated `R6/`).
 - **Target platform** (`docs/PROJECT_KNOWLEDGE.md` §1): a barrier-docking robot with a Jetson AGX Orin,
   an OV2311 global-shutter monochrome sensor and 940 nm active illumination. Deployment frames are
   **lit-minus-unlit differences**, so blur, glare, ghosting and heavy sensor noise are first-class
-  conditions. Latency budget 66 ms per frame (15 Hz pose from 30 fps lit/dark pairs; `R6/15_cost`).
+  conditions. Latency budget 66 ms per differenced frame, i.e. per pose (15 Hz pose from 30 fps lit/dark pairs; one lit-minus-unlit
+  difference per pair, so 33 ms per raw camera frame; `R6/15_cost`). This is the **design target** (redraft
+  decision "Edge platform is the NVIDIA Jetson AGX Orin", accepted 2026-07-27). The implemented demonstrator
+  (`wireless_inference`, §12) differs: a Raspberry Pi 5 camera node streams single 640x480 frames at 10 Hz
+  (`frame_rate` default on `main`) with no lit/dark differencing, and inference runs on a separate CUDA GPU
+  machine over WiFi; no Orin hardware has run anything (§12).
 - **Three stages** (`docs/ARCHITECTURE.md`, `dcc/pipeline.py:detect`):
   1. detector network: corner heatmap at full resolution + 16-channel class map at H/4;
   2. refiner network: 24x24 crop around each coarse peak -> 64x64 logit map -> 5x5 soft-argmax;
@@ -39,10 +44,10 @@ Source: `configs/abl_c2_wh_clsfocal_lam2.yaml` (`board:`), `dcc/board.py`, `R6/3
 | marker/square ratio | 0.7 |
 | pattern | cv2 4.10 `CharucoBoard`, non-legacy pattern: top-left square black |
 | physical size | **not fixed** (`square_length_m: null`); the detector works on apparent size `s` |
-| apparent-size envelope | trained `s` in [12, 128] px, log-uniform; measured bands: core 32-128, usable 16-128, degraded 10-160 (`R6/17_range/working_range.json`) |
+| apparent-size envelope | trained `s` in [12, 128] px, log-uniform. **882k release sweep** (`R6/20_robustness_REL882/distance{,_extrap}.json`, n = 60 frames/step, refined arm, worse of the two sweeps where both measure an `s`): over s = 16-128 px recall 0.907-0.976 and ID 0.970-1.000; recall dips below 0.95 at s = 16, 32, 64 and 128, so no contiguous band meets recall >= 0.95; at s = 12 recall 0.883, at s = 10 0.896 (ID 0.846), at s = 160 ID 0.749 (`R6/17_range/working_range_REL882.json`). The 'core 32-128 / usable 16-128 / degraded 10-160' bands in `R6/17_range/working_range.json` were computed on the pre-release 4.7M model and by a tool that ignored failing steps inside a band (fixed 2026-10-10); they are historical |
 | range formula | `z = f_px * S / s` (S = square edge in metres, f_px at the 640x480 input) |
 | print-ready file | `R6/31_print_board/DICT_5X5_50_5x5_24mm.pdf` (A4, 24 mm squares, 120 mm edge); `tools/print_board.py --square-mm` for other sizes; verified by detecting all 12 markers and 16 corners on the rasterised PDF, edge 120.02 mm |
-| working range at 120 mm (core band, OV2311 at 640x480) | 3 mm lens 0.08-0.34 m; 4 mm 0.10-0.40; 6 mm 0.15-0.60; 8 mm 0.20-0.80; 12 mm 0.30-1.20 m; range scales linearly with the edge |
+| working range at 120 mm (OV2311, 1600x1200 binned to 640x480, 7.5 um input pitch; 882k release, s = 16-128 px: recall >= 0.907, ID >= 0.970) | f 3.36 mm (448 px, the shortest lens in the trained 448-896 px envelope) 0.084-0.67 m; 4 mm 0.10-0.80 m; **6 mm 0.15-1.20 m**; 8 mm 0.20-1.60 m and 12 mm 0.30-2.40 m are OUTSIDE the trained lens envelope (3.4-6.7 mm). Near limit = f_px x 0.024 / 128, far = f_px x 0.024 / 16. Range scales linearly with the board edge (`R6/17_range/working_range_REL882.json`, `tools/working_range.py`) |
 | other dictionaries | same-family `_100/_250/_1000` variants share their first 50 markers with `_50`, so they are the same board; a different family (e.g. `DICT_6X6_250`) is a new board (`R6/27`) |
 | other corner counts | 4x4 (9), 6x6 (25), 7x7 (36) boards verified end to end: config change plus a fresh class head; render resolution must divide by the square count (`R6/30_REPORT…/REPORT.md` §5) |
 
@@ -515,7 +520,9 @@ Source: paper §4.6 and Appendix C (tables), `R6/08_ablations/*/train_metrics.md
   76.6% of the localisation gain but 8.5% of the identity gain: the proximity discount governs
   localisation, the focal easy-example modulation governs identity, hence per-head supervision.
 - Per-head crossing, 35k (heatmap x class): at 882k focal/focal 0.7352 / 98.86 / 0.0849; focal/BCE 0.7572 /
-  99.00 / 0.0931; **BCE/focal 0.6874 / 98.87 / 0.0081** (best p95 and tail, released); BCE/BCE 0.6970 /
+  99.00 / 0.0931; **BCE/focal 0.6874 / 98.87 / 0.0081** (best p95 at 882k; this head pairing is carried into
+  the release, but the released recipe is C2 = BCE/focal + lambda_cls 2.0, 0.6894 / 99.15 / 0.0065, §11.3 and
+  `PLAN…md` 882k composite table); BCE/BCE 0.6970 /
   99.29 / 0.0114. At 222k: focal/focal 0.8096 / 94.87; focal/BCE 0.8222 / 96.71; **BCE/focal collapses
   identity to 58.54%**; BCE/BCE 0.7611 / 94.76, so the 882k combination is not carried to 222k.
 - `lambda_cls`, 35k: 882k 1.5 0.7021 / 99.34; 2.0 0.7059 / 99.40; 4.0 0.7143 / 99.51 (a trade: ~0.06 px
@@ -613,7 +620,8 @@ error 6-vector [drot_x, drot_y, drot_z (rad); dt_x, dt_y, dt_z (board squares)].
 - Means are negligible (<= 3e-4 rad, <= 3e-3 sq). Heavy tails: sample variance 9-14x the robust variance;
   33.6% of accepted solves have a component beyond 3 robust sigma, 20.9% beyond 5. Off-diagonals weak
   (|rho| <= 0.23): a diagonal R is defensible. Including the 43 ambiguous solves inflates every std ~10x.
-- **A constant R is wrong by up to 7x across the range**: median |e|/sigma is 2.0-7.4 at the far octave and
+- **A constant R is wrong by up to 7x in sigma across the range** (up to 7.4^2 ~ 55x in variance, the quantity R
+  holds): median |e|/sigma is 2.0-7.4 at the far octave and
   0.28-0.49 at the near one. Robust sigma follows a power law in range z = f/s (board squares):
   exponents 0.97 / 0.81 / 1.02 (rotation), 1.50 / 1.49 / 1.73 (translation x, y, depth); under that model
   median |e|/sigma is within 0.83-1.24 in every octave; fitted span z = 3.9-70.7. Constants:
@@ -718,7 +726,10 @@ error 6-vector [drot_x, drot_y, drot_z (rad); dt_x, dt_y, dt_z (board squares)].
 - The 222k tier exceeds the fp16 identity budget by 0.0005 pp; accepted and stated. Its real constraint is
   the darkness cliff.
 - B1 omits SAM2 object occluders (deliberate; measured on its own axis).
-- Uncertainty calibration is parked; `pose_cov` ~6x over-confident, `sigma_px` ordering-only.
+- Uncertainty calibration is parked; `pose_cov` is not usable as R (REL882 B1: NEES mean 11.2, median 2.75,
+  against 6 -- conservative on most frames, over-confident on a tail; `26_pose_error_variance/pose_REL882_B1.json`),
+  `sigma_px` ordering-only. The older "~6x over-confident" figure is the rev5 run with *calibrated* sigma as R
+  (pose NEES 36.44 vs 6; `paper/results_rev5/10_uncertainty/NOTES_what_didnt_work.md`), not the shipped `pose_cov`.
 - The plotting tool's per-factor darkness override leaked into the ID and localisation grids until
   2026-10-09 (fixed; `fig2a`, `fig6b`, `fig6c` and the two zero-shot panel figures regenerated; no table
   number was affected). Two layout demo grids in `R6/05_comparison/figures_L_demo/` still carry it.
@@ -782,7 +793,7 @@ Checked 2026-10-09 against the checkpoints, configs and code:
 | `14_data` | of record | augmentation list, training-sample sheet |
 | `15_cost` | mixed (see §19) | cost table, MACs, VRAM |
 | `16_future_work` | design note | SSL from video |
-| `17_range` | of record | working range vs lens and board size |
+| `17_range` | `working_range_REL882.json` of record (882k release); `working_range.json` historical (4.7M model, pre-fix tool) | working range vs lens and board size |
 | `20_robustness_REL{222,502,882}` | **of record** | release-tier sweeps (n = 60) |
 | `21_pose_REL*_B1.json` | **of record** (the non-B1 files are superseded) | pose per tier |
 | `22_fourway_RELEASE`, `_882_vs_222` | of record | per-factor comparison figures and the 2x2 panel |

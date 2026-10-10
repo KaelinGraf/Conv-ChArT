@@ -54,10 +54,14 @@ def main():
     f_trained = (fov_lo * INPUT_W, fov_hi * INPUT_W)
     mm_trained = tuple(f * PITCH_UM * RHO / 1000.0 for f in f_trained)
 
-    bands = {}
+    bands, scales = {}, sorted(pts)
     for name, id_min, rec_min in BANDS:
-        ok = sorted(s for s, (i, r) in pts.items() if i >= id_min and r >= rec_min)
-        bands[name] = (ok[0], ok[-1]) if ok else None
+        best, run = [], []
+        for s in scales:
+            i, r = pts[s]
+            run = run + [s] if (i is not None and i >= id_min and r >= rec_min) else []
+            best = run if len(run) > len(best) else best
+        bands[name] = (best[0], best[-1]) if best else None
 
     s_fit = INPUT_W / a.squares
 
@@ -82,7 +86,7 @@ def main():
         hfov = 2 * math.degrees(math.atan(INPUT_W / (2 * fp)))
         inb = f_trained[0] <= fp <= f_trained[1]
         row = {"f_px_input": fp, "hfov_deg": hfov, "in_trained_envelope": inb}
-        print(f"f = {mm:.0f} mm  ({fp:.0f} px at input, HFOV {hfov:.0f} deg)"
+        print(f"f = {mm:g} mm  ({fp:.0f} px at input, HFOV {hfov:.0f} deg)"
               + ("" if inb else "   *** OUTSIDE TRAINED LENS ENVELOPE ***"))
         for name, (lo, hi) in ((k, v) for k, v in bands.items() if v):
             near, far = fp * S / hi, fp * S / lo
@@ -91,7 +95,7 @@ def main():
                           "near_m_full_board": near_fit}
             print(f"    {name:9s} s {lo:>3}-{hi:<4} -> {near:.2f} m .. {far:.2f} m"
                   + ("" if hi <= s_fit else f"   (full board in frame from {near_fit:.2f} m)"))
-        out["ranges_m"][f"{mm:.0f}mm"] = row
+        out["ranges_m"][f"{mm:g}mm"] = row
         print()
 
     o = Path(a.out); o.parent.mkdir(parents=True, exist_ok=True)

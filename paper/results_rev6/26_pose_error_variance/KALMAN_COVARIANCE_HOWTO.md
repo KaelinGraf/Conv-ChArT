@@ -8,8 +8,8 @@ whoever writes the filter that consumes `inference_result`. Every number comes f
 
 The inference node publishes, with every solved pose, a **6x6 measurement-noise covariance R** that depends
 only on the board's range. It is the measured error of the released model as a power law in range, not the
-network's own per-frame covariance (`pose_cov`), which was measured about 6x over-confident (NEES 11.2
-against 6 expected) and must never reach a filter. The filter uses the published R as its measurement noise,
+network's own per-frame covariance (`pose_cov`), which is not usable as R: on this benchmark its NEES has
+mean 11.2 and median 2.75 against 6 expected, i.e. conservative on most frames and badly over-confident on a tail and must never reach a filter. The filter uses the published R as its measurement noise,
 skips the update on the three conditions in Section 4, and gates innovations with a chi-square test because
 the error is heavy-tailed whatever R is used.
 
@@ -20,7 +20,7 @@ order, and sets `covariance_valid = True` whenever that analytic matrix exists. 
 `pose_covariance()` from the pipeline port: `(J^T R^-1 J)^-1` with the refiner's `sigma_px` as R. Both the
 pipeline spec (`deploy/PIPELINE_SPEC.md` section 9: "do not port `pose_covariance`; it is not a filter
 input") and the measurement say it is not usable as R. So today the filter receives a covariance that is too
-small by roughly a factor of six on the median frame and badly wrong on the tail.
+mis-scaled frame to frame: larger than the real error on most frames, far too small on the tail.
 
 ## 3. The measurement model to publish
 
@@ -99,7 +99,7 @@ beside this session's other pastes, and reproduced here):
 function of range. Source: Conv-ChArT paper/results_rev6/26_pose_error_variance/kalman_R_REL882.json
 (1000-frame B1 benchmark, 893 accepted solves; robust sigma per apparent-scale octave fitted as a power law
 in the range z = tvec_z / square_length, in board squares). The pipeline's per-frame analytic pose_cov is NOT
-a filter input (about 6x over-confident, NEES 11.2 against 6); this replaces it on the wire."""
+a filter input (NEES mean 11.2, median 2.75, against 6); this replaces it on the wire."""
 import numpy as np
 
 # robust sigma at z = 1 square, order (rot_x, rot_y, rot_z [rad], t_x, t_y, t_z [squares]), and the exponents

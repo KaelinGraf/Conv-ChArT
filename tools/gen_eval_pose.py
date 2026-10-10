@@ -1,32 +1,6 @@
-"""tools/gen_eval_pose.py -- pose-consistent evaluation set generator.
-
-The only place in Conv-ChArT with camera pose (K, R, t) bookkeeping. Per
-image i, rng = np.random.default_rng([pose_seed, i]) draws a pinhole K and
-a board pose (R, t) with X_cam = R @ X_board + t, then projects the board's
-metric lattice (corner i at ((i%4)+1, (i//4)+1, 0) m; square_length_m fixed
-at 1.0 here -- config's board.square_length_m is null/unused elsewhere;
-board spans [0,5]x[0,5] m, centre (2.5,2.5,0)) through it. Composited via
-the induced homography
-
-    H = K @ [r1 | r2 | t] @ S,   S = [[1/SQ,0,0.5/SQ],[0,1/SQ,0.5/SQ],[0,0,1]]
-
-(r1, r2 = R's first two columns; S maps a render-pixel homogeneous coord to
-board metres, (px+0.5)/SQ, inverting render_board's px = X*SQ - 0.5 offset).
-Checked every image against cv2.projectPoints of the same lattice to float
-precision -- disagreement means a convention (column order, dehomogenisation,
-the S offset) has slipped.
-
-Everything else -- background prep, occlusion, photometrics, geometric
-corner visibility -- is the exact dcc.synth machinery generate_sample uses.
-Only the pinhole sampling and the perspective warp are new here.
-
-That claim was FALSE until 2026-08-05 (audit B1) and is worth stating plainly, because the
-docstring asserting it is why the gap went unnoticed: _apply_photometric was called with no
-board_mask and no holes_out, and after the visibility loop instead of before. See the comment at
-the call site. KNOWN REMAINING DIVERGENCE: generate_sample also applies SAM2 _apply_cutouts and
-tests corner visibility against their alpha; this generator does not, so object occlusion is
-still absent from the pose sets. That is deliberate and out of B1's scope -- object occlusion is
-measured on its own axis in the robustness sweep -- but it is a divergence, not a match.
+"""Pose-consistent evaluation set.
+    PYTHONPATH= python tools/gen_eval_pose.py --config configs/default.yaml --out eval_pose/ --n 1000
+Writes images/, labels.jsonl (K, R, t, corners), overlay_sheet.png and meta.json.
 """
 import argparse
 import hashlib
@@ -50,12 +24,6 @@ def build_parser():
 
 
 def _accept_pose(rng, i, W, H, s_lo, s_hi, lattice, visible):
-    """Draw (K, R, t) up to 100x, rejection-sampling until >=8 of the lattice's corners
-    (board-size-dependent -- see dcc.board.n_corners) project in-frame and all of them are in
-    front of the camera; a config pathology raises loudly rather than silently degrading.
-    s_target is the nominal apparent square size at the board centre -- tilt makes the true
-    local scale vary across the board.
-    """
     import numpy as np
     import cv2
     cx, cy = (W - 1) / 2, (H - 1) / 2
@@ -81,10 +49,6 @@ def _accept_pose(rng, i, W, H, s_lo, s_hi, lattice, visible):
 
 
 def _homography_and_assert(K, R, t, SQ, render_corners, img_pts):
-    """Builds H = K @ [r1|r2|t] @ S, then asserts it reproduces cv2.projectPoints to float
-    precision -- the analytic identity that catches convention slips (r1/r2 column order, the
-    dehomogenisation, the S offset).
-    """
     import numpy as np
     Rt = np.column_stack([R[:, 0], R[:, 1], t])
     S = np.array([[1 / SQ, 0.0, 0.5 / SQ], [0.0, 1 / SQ, 0.5 / SQ], [0.0, 0.0, 1.0]])
@@ -97,9 +61,6 @@ def _homography_and_assert(K, R, t, SQ, render_corners, img_pts):
 
 
 def _composite_board_persp(bg_crop, board_3ch, mask_src, Hmat, W, H):
-    """Perspective analogue of dcc.synth._composite_board: histogram-match the (already rendered,
-    pose-invariant) board to this crop and warp it in with Hmat in place of an affine.
-    """
     import cv2
     import numpy as np
     from skimage.exposure import match_histograms

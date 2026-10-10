@@ -1,3 +1,5 @@
+"""Per-panel figure export.  PYTHONPATH= python -m pytest tests/test_viz.py -q
+"""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))

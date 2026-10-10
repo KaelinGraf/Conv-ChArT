@@ -1,30 +1,8 @@
-"""tools/video_bootstrap.py -- self-supervised fine-tuning from ordinary video of the board.
-
-The loop (each round re-harvests with the latest model and fine-tunes from the BASE weights again,
-so an early round's mistakes fall back out instead of compounding):
-
-  harvest   run the deployed pipeline on every frame; frames whose identified corners fit the lattice
-            become ANCHORS and are labelled by the fit (not by the detections); frames between anchors
-            are labelled by TRACKING the board -- each frame's homography measured by aligning the
-            board's known picture to that frame (dcc.video). Labels carry three states: positive,
-            off-frame, and unknown (no gradient: dcc.losses mask=).
-  train     tools/train_detector.py's finetune: entry with a real: block -- harvested frames mixed into
-            the synthetic stream at real.frac, BatchNorm held on its statistics.
-  eval      held-out clips, never trained on: identified-corner recall and ID precision against a
-            reference (ground truth for synthetic clips, a base-model harvest otherwise), and the
-            fraction of frames that fit, by brightness. Synthetic validation runs inside train_detector
-            and must not regress (the other side of the gate).
-
-Subcommands:
-  import-onnx      deployed .onnx -> trainer .pt (needs --config for a detector; verified vs onnxruntime)
-  make-clip        a synthetic test clip with ground truth (moving board, a dark stretch, an occluder)
-  harvest          video(s) -> <out>/<clip>/{images.npy, records.json} + overlay sheet + manifest.json
-  finetune-config  write a train_detector config for one round
-  eval             score detectors on a clip
-  rounds           harvest -> fine-tune -> eval, N times
-
-Run as a script from the repo root (never `python -m tools...`, see README):
-  PYTHONPATH= python tools/video_bootstrap.py <subcommand> --help
+"""Self-supervised fine-tuning from video of the board.
+    PYTHONPATH= python tools/video_bootstrap.py rounds --config C --base DET.onnx|.pt --refiner REF.onnx|.pt \
+        --train-video V [V ...] --heldout-video V [V ...] --backgrounds IMAGE_DIR --workdir W --rounds 2
+Subcommands: import-onnx, make-clip (synthetic test clip with ground truth), harvest, finetune-config,
+eval, rounds; each takes --help. Videos may be files or image directories.
 """
 import argparse
 import json
@@ -275,10 +253,6 @@ def cmd_make_clip(a):
 
 
 def _motion_blur(frame, v, max_len=30.0):
-    """Linear motion blur of extent v (px), CENTRED: the kernel is sampled symmetrically about its
-    own centre with bilinear splats, so the blurred corner's centroid stays on its ground-truth
-    position.
-    """
     import cv2
     import numpy as np
     v = np.asarray(v, dtype=np.float64)
@@ -308,7 +282,6 @@ def project_pts(H, pts):
 
 def harvest(videos, det, ref, cfg, out, camera=(None, None), step=1, max_frames=None, stride=1, cap=0,
             sheet=24, gts=None, hp=None, log=print):
-    """Harvest each video; returns {clip: stats}. Labels never come from the detections themselves."""
     import cv2
     import numpy as np
     from dcc import video as V
@@ -380,8 +353,6 @@ def _read_gt(path):
 
 
 def label_accuracy(records, gt_path, r, src_idx):
-    """Harvested labels vs make-clip ground truth (sensor px -> input px): position error of positives,
-    and how often a 'positive' is actually occluded or out of frame (hallucination rate)."""
     import numpy as np
     from dcc.video import sensor_to_input
     gt = _read_gt(gt_path)
@@ -455,8 +426,6 @@ def cmd_finetune_config(a):
 
 def evaluate(src, det, ref, cfg, gt_path=None, labels_dir=None, camera=(None, None), bins=(0.02, 0.15),
              return_rows=False):
-    """Per-frame identified corners vs a reference, grouped by brightness. With ground truth the groups
-    are by exposure gain; with a harvest reference, by the board's median level in the frame."""
     import numpy as np
     from dcc import video as V
     from dcc.board import n_corners
@@ -547,10 +516,6 @@ def print_eval(name, rep):
 
 
 def synth_val(det, cfg, n):
-    """The OTHER side of the gate: synthetic validation (M-01/M-02/M-04) through train_detector's
-    own run_validation, so base and fine-tuned models are scored by one implementation on one
-    set.
-    """
     import importlib.util
     from functools import partial
 

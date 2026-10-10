@@ -1,21 +1,7 @@
-"""Rebuild the PyTorch networks from deployed ONNX graphs, so a deployment that ships only .onnx
-files (the inference repo, a general user) can still fine-tune.
-
-The exporter (torch.onnx, eval mode, constant folding) FOLDS every conv_bn_relu's BatchNorm into
-its conv: the graph carries the fused weight and a fused bias under generated names
-("onnx::Conv_NNN"), while unfused tensors keep their state_dict names. Node names keep the module
-scope ("/e1/e1.0/e1.0.0/Conv"), so every tensor maps back to an exact module path. A folded conv
-gets the fused weight and its BatchNorm becomes an exact identity carrying the fused bias
-(weight 1, running_mean 0, running_var 1 - eps, so sqrt(var + eps) == 1).
-
-CONSEQUENCE FOR TRAINING: the imported BatchNorms are only correct in eval mode. In train mode
-they would normalise by batch statistics and discard the folded calibration, so a checkpoint
-built here is marked bn_folded=True and the fine-tune entry holds every BatchNorm in eval.
-
-The architecture is not in the graph's metadata, so it comes from a config (detector_kwargs).
-Four keys change no parameter shape at all (attn_heads, rope_lambda_min_cells, xsa,
-gates_enabled), so a strict state_dict load cannot validate them; verify=True therefore runs
-the rebuilt module against onnxruntime and refuses a mismatch.
+"""Deployed ONNX -> PyTorch. detector_from_onnx(path, cfg) and refiner_from_onnx(path) rebuild the networks
+and verify them against onnxruntime (folded BatchNorm becomes an identity: keep BatchNorm in eval mode);
+ckpt_from_onnx(path, model, cfg, diff) wraps one as a trainer checkpoint; load_detector / load_refiner
+accept a .pt or an .onnx.
 """
 import hashlib
 from pathlib import Path
@@ -25,9 +11,6 @@ import torch
 
 
 def _module_path(node_name):
-    """'/e1/e1.0/e1.0.0/Conv' -> 'e1.0.0'; '/gate3/wx/Conv' -> 'gate3.wx';
-    '/blocks.0/mlp/mlp.0/MatMul' -> 'blocks.0.mlp.0'.
-    """
     parts = []
     for comp in node_name.strip("/").split("/")[:-1]:
         if parts and comp.startswith(parts[-1] + "."):
@@ -38,7 +21,6 @@ def _module_path(node_name):
 
 
 def state_dict_from_onnx(onnx_path, model):
-    """ONNX initializers -> a strict-loadable state_dict for `model`, undoing BN folding."""
     import onnx
     from onnx import numpy_helper
 
@@ -99,7 +81,6 @@ def state_dict_from_onnx(onnx_path, model):
 
 
 def onnx_parity(model, onnx_path, shape, n=2, seed=0):
-    """max |ORT(graph) - torch(model)| over n random inputs, CPU fp32 on both sides."""
     import onnxruntime as ort
 
     sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
@@ -119,7 +100,6 @@ def onnx_parity(model, onnx_path, shape, n=2, seed=0):
 
 
 def detector_from_onnx(onnx_path, cfg, verify=True, tol=1e-3):
-    """DetectorNet built from cfg (detector_kwargs + board) with the graph's weights."""
     from dcc.board import n_corners
     from dcc.model import DetectorNet, detector_kwargs
 
@@ -134,7 +114,6 @@ def detector_from_onnx(onnx_path, cfg, verify=True, tol=1e-3):
 
 
 def refiner_from_onnx(onnx_path, verify=True, tol=1e-3):
-    """Refiner with its width read off the graph (body.1's out-channels, as refiner_for does)."""
     import onnx
     from onnx import numpy_helper
 
@@ -153,8 +132,6 @@ def refiner_from_onnx(onnx_path, verify=True, tol=1e-3):
 
 
 def ckpt_from_onnx(onnx_path, model, cfg, parity):
-    """A dcc.trainutil.save_ckpt-shaped dict (model == ema), so train_detector's finetune: entry and
-    every checkpoint loader read it unchanged. bn_folded tells the trainer to hold BatchNorm in eval."""
     sd = {k: v.clone() for k, v in model.state_dict().items()}
     data = Path(onnx_path).read_bytes()
     return {"step": 0, "resume_count": 0, "model": sd, "ema": sd, "optim": None, "cfg": cfg,
@@ -165,8 +142,6 @@ def ckpt_from_onnx(onnx_path, model, cfg, parity):
 
 
 def load_detector(path, cfg=None, device="cpu"):
-    """Detector from a trainer checkpoint (.pt: its OWN cfg, EMA preferred) or a graph (.onnx: cfg
-    required). Returns (model, cfg_used)."""
     path = Path(path)
     if path.suffix == ".onnx":
         assert cfg is not None, "an .onnx detector needs --config: the graph does not carry its architecture"

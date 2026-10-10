@@ -1,3 +1,6 @@
+"""Networks: shapes, parameter counts, initialisation, RoPE, losses, ONNX export, gradient flow.
+    PYTHONPATH= python -m pytest tests/test_model.py -q
+"""
 import math
 import sys
 from pathlib import Path
@@ -33,9 +36,6 @@ def test_param_count_full():
 
 
 def test_refiner_width_default_is_backward_compatible():
-    """width_mult became a Refiner argument on 2026-07-31 so the small tiers can shrink the fixed
-    97,056-param refiner (36% of the 172k detector's total).
-    """
     from dcc.model import refiner_for
     base = Refiner()
     assert sum(p.numel() for p in base.parameters()) == 97_056
@@ -135,7 +135,6 @@ def test_loss_finite_n0():
 
 
 def _focal_scalar(z, y, alpha=2, beta=4):
-    """Independent, unvectorised reference: same formula, plain Python math."""
     p = 1.0 / (1.0 + math.exp(-z))
     if y == 1.0:
         return -((1 - p) ** alpha) * math.log(p)
@@ -171,9 +170,6 @@ def test_forward_deterministic():
 
 
 def test_xsa_default_off_is_noop():
-    """xsa is an optional, default-off flag -- must not perturb the headline model (mid-training as
-    of this writing).
-    """
     torch.manual_seed(0)
     m1 = DetectorNet(64, 64)
     torch.manual_seed(0)
@@ -196,10 +192,6 @@ def test_xsa_default_off_is_noop():
 
 
 def test_xsa_orthogonal_to_self_value():
-    """With xsa=True, each head's post-XSA attention output (proj's actual input, tapped live off
-    the real forward -- not re-derived from the XSA formula) must be orthogonal to that head's
-    own value vector by construction (Zhai eq. 2).
-    """
     torch.manual_seed(0)
     m = DetectorNet(64, 64, xsa=True).eval()
     x = torch.randn(2, 1, 64, 64)
@@ -269,10 +261,6 @@ def test_gradflow_gates_and_attention():
 
 
 def test_refiner_loss_shape_and_value():
-    """Regression guard for the (B,1,64,64) logits vs (B,64,64) targets shape mismatch: an
-    unhandled broadcast pairs every logit-crop against every target-crop instead of matching
-    them one-to-one.
-    """
     torch.manual_seed(0)
     B = 3
     logits = torch.randn(B, 1, 64, 64)

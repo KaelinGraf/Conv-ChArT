@@ -1,3 +1,5 @@
+# Default configuration: board, pipeline thresholds, generator (synth), detector training (train)
+# and refiner training (refiner_train). Copy, edit, and pass with --config.
 input_size: [1600, 1200]
 sigma_hm: 2.0
 sigma_cls: 1.0

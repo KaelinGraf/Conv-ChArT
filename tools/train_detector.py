@@ -1,47 +1,8 @@
-"""tools/train_detector.py -- MT-05 Stage 1 (detector) training loop.
-
-Recipe (all sourced from cfg["train"]): AdamW (lr, betas=(0.9,0.999), wd via
-dcc.trainutil.param_groups so biases/norm params skip weight decay), micro-
-batch cfg.train.batch x cfg.train.accum grad-accumulation steps per
-optimizer step, bf16 autocast + channels_last, grad-clip by global norm
-after accumulation (before the optimizer step), cosine LR + EMA update per
-optimizer step. Validation runs forward passes on a second `eval_model`
-instance loaded from EMA weights (ema.copy_to), so the live training model's
-mode/grads are never disturbed by validation. Every validation pass also
-dumps the first 3 images' draw_overlay/heatmap_overlay panels to
-runs/<name>/preview/ -- a numeric gate alone missed a visually-obvious
-generator defect once (see tools/preflight.py's generator_lock), so a human
-glance at real predictions rides alongside the M-01/M-02/M-04 numbers below.
-
-Metrics per MT-05: M-01 (coarse localisation error vs visible GT, matched by
-greedy NN within cfg.train.match_px; TAIL_PX=4 is MT-03's refiner capture
-range, the tail-fraction gate -- a fixed spec constant, not a config key),
-M-02 (match ratio by s-octave, bins per test_generator.py's convention:
-[12,16) [16,32) [32,64) [64,128], last bin closed; the sub-octave low bin is
-the corner-only regime -- markers unreadable), and M-04 (ID accuracy on matched
-corners, by octave) via a LAZY import of dcc.pipeline.read_ids -- that
-module owns the bilinear ID readout (one canonical implementation); if it
-isn't importable yet, M-04 is skipped with a one-time warning, never
-reimplemented here.
-
-P1/P2 diagnostics (gate3/gate4 alpha stats; per-block attention entropy on
-one fp32 val image) are read via forward hooks on model.gate3/gate4/blocks
-that recompute the signal from dcc.model's own exposed pieces rather than
-reimplementing the gate/attention math: AttnGate.alpha(skip, g) (forward
-itself returns only the gated skip) for P1, and Block.n1/qkv_heads (forward
-runs attention through F.scaled_dot_product_attention, which never
-materialises softmax(QK^T)) for P2. If a hooked module lacks these methods,
-its diagnostic is silently omitted after one warning: this is instrumentation
-around a dcc.model contract that could still change, not an acceptance gate,
-so it must never crash a training run.
-
-wandb mirroring is config-gated (cfg["train"]["wandb"]["enabled"], default
-false) and strictly best-effort alongside metrics.jsonl, never a replacement
-for it: every _wandb_* call swallows its own exceptions (warn-once via
-_warn_once) so a telemetry outage (bad API key, no network, a wandb-side
-error) can never crash or stall the run. When enabled, the run ID and URL
-print as an unmissable `WANDB_RUN_ID=... WANDB_RUN_URL=...` line right after
-init, for a supervising process to parse.
+"""Stage-1 detector training.
+    PYTHONPATH= python tools/train_detector.py --config C --name N [--steps S] [--resume CKPT] [--workers W]
+        [--freeze-trunk] [--retarget-from CKPT]
+Writes runs/N/metrics.jsonl and checkpoints. A finetune: block in the config starts from a trained
+checkpoint; a real: block mixes in harvested video frames (tools/video_bootstrap.py).
 """
 import argparse
 import sys
@@ -92,9 +53,6 @@ _EARLY_STOP_DEFAULTS = {"enabled": False, "patience": 3, "min_steps": 100000, "t
 
 
 def _early_stop_series(window, get, direction):
-    """One monitored metric's relative improvement across `window` (chronological full-val
-    entries): direction="lower" (m01 mean) or "higher" (m02/m04 ratios).
-    """
     values = [get(h) for h in window]
     if any(v is None for v in values):
         return None
@@ -105,9 +63,6 @@ def _early_stop_series(window, get, direction):
 
 
 def early_stop_should_trigger(history, step, es_cfg):
-    """Pure decision function behind the config-gated early stop (cfg["train"]["early_stop"]) --
-    factored out so it's testable without a training loop.
-    """
     cfg = {**_EARLY_STOP_DEFAULTS, **(es_cfg or {})}
     if not cfg["enabled"] or step < cfg["min_steps"]:
         return False
@@ -128,9 +83,6 @@ def early_stop_should_trigger(history, step, es_cfg):
 
 
 def _wandb_init(cfg, wandb_cfg, run_dir, name):
-    """Best-effort wandb run construction, gated by cfg["train"]["wandb"] ["enabled"] (default
-    false) -- None when disabled.
-    """
     if not wandb_cfg.get("enabled", False):
         return None
     try:
@@ -146,11 +98,6 @@ def _wandb_init(cfg, wandb_cfg, run_dir, name):
 
 
 def _wandb_flatten(fields):
-    """JsonlLogger-shaped kwargs -> wandb's flat metric namespace: a scalar kwarg logs under its
-    own key unchanged; a dict-valued kwarg (val=result, full_val=result, early_stop={...})
-    becomes "<key>/<nested path, underscore-joined>" per leaf -- e.g. val={"m01": {"mean": 1.2}}
-    -> {"val/m01_mean": 1.2}.
-    """
     def walk(prefix, v, sep):
         if isinstance(v, dict):
             out = {}
@@ -166,10 +113,6 @@ def _wandb_flatten(fields):
 
 
 def _wandb_log(run, step, **fields):
-    """Mirrors exactly what logger.log(step, **fields) receives -- call this alongside every
-    JsonlLogger.log call, same kwargs, so the two stay in lockstep by construction rather than
-    by separately-maintained call sites.
-    """
     if run is None:
         return
     try:
@@ -180,9 +123,6 @@ def _wandb_log(run, step, **fields):
 
 
 def _wandb_log_preview(run, preview_dir, step, group):
-    """Mirrors run_validation's first-3 preview PNGs -- already written to preview_dir at these
-    exact filenames by run_validation itself -- as wandb.Image, keyed <group>/preview_<i>.
-    """
     if run is None:
         return
     try:
@@ -206,10 +146,6 @@ def _wandb_finish(run):
 
 
 def _val_targets(cfg, record):
-    """Renders detector targets for one SynthVal (image, record) pair via dcc.targets directly --
-    mirrors dcc.dataset._render_detector_targets (private to that module) since SynthVal's
-    raw-record shape differs from SynthStream's dict-yield contract.
-    """
     import numpy as np
     import torch
     from dcc.board import n_corners
@@ -240,9 +176,6 @@ def _val_collate(cfg, batch):
 
 
 def _match_greedy(gt_xy, det_xy, max_px):
-    """One-to-one nearest-neighbour match within max_px, closest pairs first (standard greedy
-    keypoint-matching protocol).
-    """
     import numpy as np
     if len(gt_xy) == 0 or len(det_xy) == 0:
         return []
@@ -260,20 +193,12 @@ def _match_greedy(gt_xy, det_xy, max_px):
 
 
 def _gate_hook(name, captured):
-    """dcc.model.AttnGate exposes alpha(skip, g) separately from forward (which returns only the
-    gated skip tensor) -- recompute it from the same (skip, g) the hook sees forward receive,
-    rather than guessing at a tuple-output contract forward doesn't have.
-    """
     def fn(module, inputs, output):
         captured[name] = module.alpha(*inputs).detach()
     return fn
 
 
 def _block_hook(name, captured):
-    """dcc.model.Block runs attention via F.scaled_dot_product_attention, which never materialises
-    softmax(QK^T) -- so recompute it explicitly, fp32, from the block's own (public)
-    n1/qkv_heads, using the exact input the hook sees forward receive.
-    """
     def fn(module, inputs, output):
         x_normed = module.n1(inputs[0])
         q, k, _v = module.qkv_heads(x_normed)
@@ -283,7 +208,6 @@ def _block_hook(name, captured):
 
 
 def _register_gate_hooks(model):
-    """Cheap (1x1 conv) -- safe to leave attached for a whole batch sweep."""
     captured, handles = {}, []
     for gname in ("gate3", "gate4"):
         g = getattr(model, gname, None)
@@ -293,11 +217,6 @@ def _register_gate_hooks(model):
 
 
 def _register_block_hooks(model):
-    """Materialises a full (heads, T, T) attention matrix per block -- T is the H/16 bottleneck
-    token count (thousands at this input res), so this is ONLY safe on a single image and must
-    never be left attached across a batched validation sweep (a B=8 sweep at T~7500 tried to
-    allocate ~14GB and OOM'd the whole run the first time this was smoke-tested).
-    """
     captured, handles = {}, []
     for i, blk in enumerate(getattr(model, "blocks", []) or []):
         if hasattr(blk, "qkv_heads") and hasattr(blk, "n1"):
@@ -329,11 +248,6 @@ def _diag_log_fields(captured):
 
 
 def run_validation(model, loader, cfg, device, tau_hm, match_px, preview_dir=None, step=None):
-    """Returns {val_loss, m01, m02, m04, diag}; m04 is None if dcc.pipeline isn't importable yet.
-    preview_dir/step (pass both together) additionally dump the first 3 images'
-    draw_overlay/heatmap_overlay side-by-side panels to preview_dir/step_{step:07d}_val{i}.png
-    -- pure visualisation, excluded from every metric above.
-    """
     import cv2
     import numpy as np
     import torch
@@ -455,7 +369,7 @@ def main():
 
     from dcc.board import n_corners
     from dcc.dataset import SynthStream, SynthVal, load_config
-    from dcc.losses import detector_loss, loss_kwargs  # noqa: F401
+    from dcc.losses import detector_loss, loss_kwargs
     from dcc.model import DetectorNet, detector_kwargs
     from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, load_retarget_ckpt, param_groups, save_ckpt, warn_cfg_drift
 

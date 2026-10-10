@@ -1,152 +1,7 @@
-"""SD-01..SD-11 synthetic sample generator — the one canonical generation path.
-
-Conventions: points are (x, y) float64; arrays are row-major [y][x]. Images
-are uint8 on the way in/out; the photometric workspace is float32 0..255,
-BGR (3-channel), clipped to uint8 only once, at the very end. size_mult
-scales the (W, H) = cfg["input_size"] canvas up (2x stands in for the sensor
-frame for the refiner corpus, per SD-07); s_px/tx/ty are always reported at
-that generated resolution. Every random draw takes an explicit rng argument
-(a numpy Generator instance) — nothing here reaches into the global numpy
-random state, the stdlib `random` module, or cv2's RNG.
-
-Algorithm order per sample (SD-02..SD-06): (1) negative decision; (2)
-background sample + flip/rotate/pad/crop; (3) [positive only] render board,
-sample/accept an affine, histogram-match, anti-alias prefilter, warp,
-composite; (4) occlusion
-(cutout-object composite, then rect holes -- both gated by `occlude`);
-(5) visibility (junction-point, geometric only); (6) photometrics, then clip
-to uint8; (7) grayscale, last. Negatives run (2, 4, 6, 7) and skip the board
-(step 3) and per-corner visibility (step 5 — there are no corners).
-
-Perspective model (SD-02 Rev C): the board warp is a 3x3 homography H = M3
-@ P -- M3 the existing 6-DoF affine lifted to 3x3, P a perspective factor
-conjugated about the render centre c_r so that P(c_r) dehomogenises to c_r
-exactly: P = T_cr @ [[1,0,0],[0,1,0],[gx,gy,1]] @ T_-cr. (gx, gy) reproduce
-the third-row perturbation of the homography induced by tilting a
-fronto-parallel board by tau (about in-plane axis angle psi) in front of a
-virtual pinhole of focal f = fov_scale * w2 viewing it at apparent scale s:
-g = sin(tau) * s / (f * SQ); (gx, gy) = g * (cos psi, sin psi); SQ = the
-render square side in px (see tools/gen_eval_pose.py for the from-first-
--principles pinhole construction this is calibrated against, and
-tests/test_generator.py::test_perspective_calibration for the numeric
-check). tau ~ U(0, tilt_max_deg) is kept (else forced to 0, pure affine)
-w.p. perspective_p; psi ~ U(0, 2*pi); fov_scale ~ U(*fov_scale_range). The
-coin and all three draws always happen, in that order, regardless of the
-coin's outcome or of a `components` override (_sample_perspective) -- a
-sample always spends the same four rng calls here, keeping downstream
-occlusion/photometric draws aligned across perspective_p/tilt_max_deg
-config changes.
-
-Object-cutout occlusion (config-gated, synth.cutouts, additional to
-_apply_occlusion's rect holes -- those model dead zones/glare, this models
-real clutter sitting in front of the board): an offline SAM2 segmentation
-pass (tools/gen_cutouts.py) builds a bank of RGBA PNG cutouts from COCO
-images; _apply_cutouts warps (resize, rotate, feather) and alpha-composites
-up to cutouts.max_objects of them per sample, max-accumulating their alpha
-into an (h2, w2) occ_alpha mask. A junction whose rounded pixel lands on
-occ_alpha >= 0.5 counts as covered -- the same kind of geometric,
-point-in-region test _apply_occlusion's rect holes already are, so DA-04's
-discriminator stays geometric-only. Like _sample_perspective, _apply_cutouts
-always spends its full rng budget -- a coin, then max_objects * 6 draws --
-regardless of the coin/bank/per-slot outcome, so cutouts.p/max_objects and
-bank presence/absence never desync the draws downstream of it. Gated by the
-same `occlude` flag as the rect holes (both are "occlusion effects" off in
-one switch), so refiner-crop generation and content-check tests that pass
-occlude=False stay exactly as clean as before this feature existed.
-
-Slice B5 (final generator slice -- three independent, config-gated
-additions): (a) contrast jitter (blend-about-mean: work = m + (work-m)*c)
-and multiplicative speckle noise in _apply_photometric -- the reference
-pipeline's only contrast source and the Deep ChArUco paper's own Table 1
-speckle term, both previously missing from this port; (b) an anti-alias
-prefilter in _composite_board (synth.prefilter), band-limiting the board
-render before warpPerspective minifies it so small marker modules degrade
-the way a real lens/sensor would rather than aliasing under INTER_LINEAR
-point-sampling -- pixel-only (blurs the board image, never the mask), spends
-no rng draws, and runs strictly after H is fixed and before it is ever
-applied to a point, so the corner geometry is provably untouched; (c)
-make_generic_crop, an optional
-(synth.refiner_generic_frac, default 0 = off) refiner-corpus complement that
-swaps a synthetic arbitrary-junction crop (2-4 flat angular sectors meeting
-at one point, Deep-ChArUco Fig 6 style) in for a real chessboard-corner
-crop, so the refiner also sees non-checkerboard corner shapes;
-dataset.py's _maybe_replace_generic is the shared glue for both refiner call
-sites (SynthStream and RefinerVal) and draws nothing extra when the frac is
-0 or absent. (a) adds mid-photometric rng draws, so every existing val/train
-stream realigns one final time from this slice on -- accepted, and the last
-such realignment before this file freezes for the training campaign.
-
-Rev-2 augmentation pack (task #29 -- sim-to-real, all config-gated,
-individually probability/enabled-gated, all photometric-only except
-adherent droplets, see below): _apply_photometric's pinned order is now
-composite -> (1) board specular -> (2) droplets -> (3) vignette -> (4) NIR
-ink-contrast jitter -> existing blur family -> (5) differencing pair (when
-drawn, SUBSUMES the brightness step for that sample -- brightness's own
-coin isn't even drawn) or legacy brightness -> dark-regime white grey-out
-(task #25, gated on that sample's own OUTPUT exposure landing deep, BEFORE
-sensor noise -- the differencing branch reads its own clipped result's 99th
-percentile rather than its ambient draw, since ambient alone doesn't
-determine output brightness; the brightness branch's own draw IS
-output-coupled, so it's used directly, see _apply_photometric) -> (6)
-Poissonian-Gaussian sensor noise (replaces the legacy
-additive-Gaussian draw when sensor_noise_enabled; gauss_noise_p still gates
-WHETHER noise fires either way) -> (7) fixed-pattern noise (full-canvas
-only, see _apply_photometric) -> existing speckle/mult/contrast/rgb-shift/
-glare/ghost, unchanged relative order (brightness excised from its old spot
-between mult and contrast) -> clip/uint8. (1) specular, (3) vignette, (4)
-ink-contrast and the differencing pair's illumination lobe are all
-board-anchored or canvas-centred FIELDS evaluated at absolute canvas
-coordinates -- window-evaluable exactly like the pre-existing glare
-implementation, sharing its lazy per-call coordinate grid (_apply_
-photometric's abs_grid closure). board_mask (the warped board alpha, `work`'s
-own local frame) and board_centroid ((x, y) in ABSOLUTE canvas coordinates)
-thread into _apply_photometric from generate_sample (via a new _warp_mask
-helper -- _composite_board's own 4-tuple return can't grow without breaking
-tests/test_refiner_fast.py's positional unpack, so the mask is re-derived
-from the returned H instead of also being returned) and from
-dcc.refiner_data.fast_refiner_crops (board_centroid approximated by the
-crop's own corner position there, per the module's own approximation
-style). Droplets' mode (b) (a refractive patch that resamples a
-several-times-larger neighbourhood than its own disc) and fixed-pattern
-noise (a fixed-per-frame pattern) are both restricted to window_origin is
-None (the full-canvas arm): mode (b) needs pixel data well outside the fast
-refiner arm's local-window budget, and FPN's "fixed per frame" contract
-would need a hash-reseeded-per-column RNG to stay window-consistent, which
-this pack does not attempt -- 24px refiner crops are near-DC for banding
-regardless. Droplet mode (b) is the ONLY label-touching new augmentation:
-an information-destroying disc (alpha/radius past a config threshold)
-registers a bounding-square hole through generate_sample's own `holes` list
-(the same rect-hole format/visible() test _apply_occlusion's holes already
-use), via an optional holes_out list _apply_photometric appends to in
-place -- not a return-value change, for the same tests/test_generator.py
-and tools/gen_eval_pose.py single-return-value-callers reason as above.
-
-Rev-3 differencing physics (task #31, Kaelin's 940nm rig photometry,
-2026-07-28): the rev-2 differencing model treated I_lit/I_unlit as two
-independently-scaled copies of the composite and applied sensor noise
-AFTER subtraction, at the (small) residual's own rate. The real rig pair is
-(daylight alone) vs (daylight + a modest active LED) -- a LARGE shared
-pedestal with a SMALL additive increment, so I_lit = work * (ambient +
-illum_lobe) (illum_lobe now the LED's own increment, not the frame's whole
-brightness) while I_unlit = work * ambient is unchanged in form. Each frame
-is independently clipped to [0, 255] (real sensor wells -- a saturated lit
-region produces physically-correct contrast-inverted residue after
-subtraction) and independently given Poissonian-Gaussian sensor noise
-(Foi et al. 2008; EMVA 1288) BEFORE the inter-frame shift and subtraction --
-same K/sigma_read draw for both captures (one sensor, one gain setting),
-two independent noise realizations. This is what actually limits
-differenced-frame SNR at realistic LED/daylight ratios (sqrt(2) x daylight
-shot noise against an LED-only signal); noise-after-subtraction was
-unrealistically clean and collapsed real-rig pose accuracy in simulation.
-The downstream (6) sensor-noise step's own coin still always draws for
-differencing samples (rng-stream consistency), but its body is skipped
-(local `diff_noised` flag, not a config key) since the noise already
-happened per-frame inside branch (5) -- applying it twice would double it.
-differencing_ambient/differencing_illum_peak's ranges were widened/shifted
-to the daylight-pedestal regime; differencing_illum_floor/_sigma_frac/
-_shift_px keep their rev-2 meaning (the LED lobe's own shape, and the
-inter-frame ego-motion budget) unchanged. All ranges are PROVISIONAL,
-pending measured lit/unlit histograms from tasks #26/#31.
+"""Synthetic sample generator. generate_sample(cfg, rng, bg_files) returns (record, meta): a composited
+grayscale image at cfg["input_size"] with corners [{x, y, index, visible}]. list_backgrounds(path) lists a
+background corpus (an image directory or a COCO .json); cut_refiner_crops and make_generic_crop produce
+refiner crops. Every random draw comes from the numpy Generator passed in.
 """
 import json
 from pathlib import Path
@@ -159,7 +14,6 @@ from dcc.board import get_board, render_board
 
 
 def list_backgrounds(path):
-    """Sorted background image paths."""
     p = Path(path)
     if p.suffix == ".json":
         data = json.loads(p.read_text())
@@ -169,7 +23,6 @@ def list_backgrounds(path):
 
 
 def load_cutouts(path):
-    """Sorted cutout-bank RGBA PNG paths (tools/gen_cutouts.py's output dir)."""
     if not path:
         return []
     p = Path(path)
@@ -180,19 +33,12 @@ _CUTOUT_CACHE = {}
 
 
 def _cached_cutouts(path):
-    """Module-level memoised load_cutouts, keyed by `path`: generate_sample's fallback for its
-    optional cutout_files=None parameter. dcc/dataset.py owns SynthStream/SynthVal/RefinerVal
-    and is a concurrent actor's file in this slice, so it has no explicit cutout_files plumbing
-    yet (unlike bg_files, which it already loads once and passes in); this cache is what keeps
-    that fallback from re-globbing the bank directory on every single sample.
-    """
     if path not in _CUTOUT_CACHE:
         _CUTOUT_CACHE[path] = load_cutouts(path)
     return _CUTOUT_CACHE[path]
 
 
 def visible(p, holes, size_wh):
-    """SD-04 discriminator, junction-point/geometric only."""
     x, y = p
     w, h = size_wh
     if not (-0.5 <= x < w - 0.5 and -0.5 <= y < h - 0.5):
@@ -204,7 +50,6 @@ def visible(p, holes, size_wh):
 
 
 def _prep_background(bg, rng, syn, w2, h2):
-    """Flip/rotate the loaded background and random-crop to (w2, h2)."""
     if rng.random() < syn["bg_hflip_p"]:
         bg = cv2.flip(bg, 1)
     h, w = bg.shape[:2]
@@ -227,10 +72,6 @@ def _prep_background(bg, rng, syn, w2, h2):
 
 
 def _sample_affine(cfg, rng, w2, h2, s_arg, size_mult, components, nx=5):
-    """Draw (or take from `components`, the test/audit override surface) the six DoF of the board
-    placement: A = (s/SQ) * R(theta) @ Shear(shear_x, shear_y); M = [A | c_in + t - A @ c_r]
-    maps render-space -> composite- space about the render's own centre, then to c_in + t.
-    """
     comp = components or {}
     if "s" in comp:
         s = float(comp["s"])
@@ -262,11 +103,6 @@ def _sample_affine(cfg, rng, w2, h2, s_arg, size_mult, components, nx=5):
 
 
 def _sample_perspective(cfg, rng, components):
-    """Draw (or take from `components`) tau/psi/fov_scale -- see module docstring for the
-    draw-order contract: coin, tau, psi, fov_scale always draw from rng in that order regardless
-    of the coin's outcome or of an override; an override only swaps the OUTPUT value, so the
-    number of rng calls this step consumes never depends on `components`.
-    """
     comp = components or {}
     syn = cfg["synth"]
     coin = rng.random() < syn["perspective_p"]
@@ -280,12 +116,6 @@ def _sample_perspective(cfg, rng, components):
 
 
 def _perspective_factor(tau, psi, fov_scale, s, w2, render_res, nx=5):
-    """3x3 P conjugated to fix the render centre c_r (see module docstring): calibrated so a tilt
-    tau about axis angle psi matches, to first order, the induced homography of a tilted
-    fronto-parallel board at apparent scale s in front of a virtual pinhole of focal fov_scale *
-    w2. nx is the board's per-side square count (SQ = render_res // nx); default 5 matches the
-    project board.
-    """
     SQ = render_res // nx
     g = np.sin(tau) * s / (fov_scale * w2 * SQ)
     gx, gy = g * np.cos(psi), g * np.sin(psi)
@@ -297,21 +127,12 @@ def _perspective_factor(tau, psi, fov_scale, s, w2, render_res, nx=5):
 
 
 def _warp_mask(H, render_res, w2, h2):
-    """The board alpha (render_res^2 all-ones, H-warped to the (w2, h2) canvas) -- factored out of
-    _composite_board so generate_sample can obtain it a SECOND time (for _apply_photometric's
-    board_mask arg) without _composite_board's own 4-tuple return growing a 5th element, which
-    would break tests/test_refiner_fast.py::test_window_equivalence's positional unpack.
-    """
     mask_src = np.ones((render_res, render_res), dtype=np.float32)
     return cv2.warpPerspective(mask_src, H, (w2, h2), flags=cv2.INTER_LINEAR,
                                 borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
-
 def _integrate_board(cfg, rng, bg, board, mask, w2, h2):
-    """rev-6 scene integration (Kaelin 2026-07-29): make the board look LIT INTO the scene rather
-    than CUT INTO it.
-    """
     r6 = cfg["synth"].get("integration", {})
     if r6.get("relight_enabled", False):
         lum = cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY)
@@ -335,11 +156,6 @@ def _integrate_board(cfg, rng, bg, board, mask, w2, h2):
     return board, mask, bg
 
 def _composite_board(bg_crop, rng, cfg, w2, h2, s_arg, size_mult, components):
-    """Render the board once, sample its affine + perspective factors, histogram-match it to the
-    background crop, anti-alias prefilter it when minifying (synth.prefilter -- pixel-only, no
-    rng, runs after H/p_img's inputs are already fixed so geometry can't be touched), warp
-    board+mask, and alpha-composite.
-    """
     render_res = cfg["synth"]["render_res"]
     bcfg = cfg.get("board")
     pool = (bcfg or {}).get("pool")
@@ -382,15 +198,6 @@ def _composite_board(bg_crop, rng, cfg, w2, h2, s_arg, size_mult, components):
 
 
 def place_cutout(work, occ_alpha, rgba, scale, rot, hflip, cx, cy):
-    """Pure placement step of _apply_cutouts, factored out so it can be unit tested directly with
-    explicit params (no rng/bank involved): given an already-loaded BGRA `rgba` cutout, hflip it
-    if drawn, resize so its longest side is scale*min(w2,h2) (INTER_AREA when minifying), rotate
-    by `rot` degrees about its own centre (expanding the canvas so nothing is cropped,
-    transparent-filled corners), feather the alpha with a (3,3) GaussianBlur, then
-    alpha-composite it onto `work` (mutated in place, its (h2, w2) taken from work.shape)
-    centred at (cx, cy) in work's own frame -- clipped to frame; fully off-frame is legal, a
-    no-op.
-    """
     if rgba is None or rgba.ndim != 3 or rgba.shape[2] != 4:
         return None
     if hflip:
@@ -430,7 +237,6 @@ def place_cutout(work, occ_alpha, rgba, scale, rot, hflip, cx, cy):
 
 
 def _apply_cutouts(work, rng, cfg, cutout_files, w2, h2):
-    """Realistic object occlusion -- see module docstring."""
     cutouts = cfg["synth"]["cutouts"]
     coin = rng.random() < cutouts["p"]
     occ_alpha = np.zeros((h2, w2), dtype=np.float32)
@@ -454,8 +260,6 @@ def _apply_cutouts(work, rng, cfg, cutout_files, w2, h2):
 
 
 def _apply_occlusion(work, rng, occ, w2, h2):
-    """SD-04 CoarseDropout-style holes, filled in place; returns the hole
-    rects (x0, y0, w, h) so visibility and meta can use them."""
     holes = []
     if rng.random() < occ["p"]:
         lo_n, hi_n = occ["holes"]
@@ -477,10 +281,6 @@ def _apply_occlusion(work, rng, occ, w2, h2):
 
 
 def _sample_on_mask(rng, mask, thresh=0.5, tries=5):
-    """A point drawn (reject-sampled, `tries` attempts) uniformly over `mask`'s own bounding box
-    and accepted only where `mask > thresh` -- "uniform on the board" for _apply_photometric's
-    specular lobe centre.
-    """
     ys, xs = np.where(mask > thresh)
     h, w = mask.shape[:2]
     if len(xs) == 0:
@@ -495,11 +295,6 @@ def _sample_on_mask(rng, mask, thresh=0.5, tries=5):
 
 
 def _apply_refractive_droplet(work, cx, cy, radius, minify, alpha, blur_sigma):
-    """Mode-(b) adherent droplet (Roser & Geiger ICCV 2009; You et al. CVPR 2013): the disc of
-    radius `radius` centred at (cx, cy) is replaced by a minified, vertically-inverted, blurred
-    crop of the scene around that same point -- a cheap stand-in for a water droplet's own tiny
-    lens.
-    """
     h, w = work.shape[:2]
     diam = max(2, int(round(2 * radius)))
     side = min(max(diam, int(round(diam / minify))), w, h)
@@ -527,7 +322,6 @@ def _apply_refractive_droplet(work, cx, cy, radius, minify, alpha, blur_sigma):
 
 def _apply_photometric(work, rng, ph, w2, h2, window_origin=None, board_mask=None,
                         board_centroid=None, holes_out=None):
-    """SD-03 photometric set, in the pinned order; each gated by its own probability."""
     ph_h, ph_w = work.shape[:2]
     wx0, wy0 = (0, 0) if window_origin is None else window_origin
 
@@ -716,7 +510,6 @@ def _apply_photometric(work, rng, ph, w2, h2, window_origin=None, board_mask=Non
 
 def generate_sample(cfg, rng, bg_files, s=None, size_mult=1, force_negative=None,
                      photometric=True, occlude=True, components=None, cutout_files=None):
-    """Generate one SD-05 record + in-memory meta."""
     W, H = cfg["input_size"]
     w2, h2 = W * size_mult, H * size_mult
     assert w2 == int(w2) and h2 == int(h2), \
@@ -771,10 +564,6 @@ def generate_sample(cfg, rng, bg_files, s=None, size_mult=1, force_negative=None
 
 
 def cut_refiner_crops(cfg, rng, image2x, corners_visible_xy):
-    """SD-07 refiner crops: up to refiner_max_corners rng-chosen corners get a jittered 24x24 crop
-    each. j is resampled up to 3 times if it would put the true offset outside the 64x64@8x
-    support or the crop outside the image; a corner that never lands is skipped, not clamped.
-    """
     jitter = cfg["refiner_jitter_px"]
     max_n = cfg["synth"]["refiner_max_corners"]
     h2, w2 = image2x.shape
@@ -796,11 +585,6 @@ def cut_refiner_crops(cfg, rng, image2x, corners_visible_xy):
 
 
 def make_generic_crop(rng, jitter_px=4.0, roughen=True):
-    """DA-04 generic-corner refiner-corpus complement (task #6, Deep-ChArUco Fig 6 style): a
-    synthetic 24x24 crop of 2-4 flat-shaded angular sectors meeting at one point, standing in
-    for the arbitrary (non-checkerboard) junction shapes a real scene can present --
-    cut_refiner_crops' chessboard corners are otherwise the only shape SD-07 ever produces.
-    """
     for _try in range(3):
         d = rng.uniform(-jitter_px, jitter_px, size=2)
         if max(abs(d[0]), abs(d[1])) <= 3.9375:

@@ -1,3 +1,4 @@
+<!-- Conv-ChArT architecture figure, embedded by README.md and docs/ARCHITECTURE.md. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1520" height="900" viewBox="0 0 1520 900" font-family="Helvetica, Arial, sans-serif">
   <defs>
     <marker id="aGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

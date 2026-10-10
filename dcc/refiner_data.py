@@ -1,66 +1,6 @@
-"""SD-07 fast-arm refiner crop generation: renders the refiner's 24x24
-training crops directly via a local-window warp instead of harvesting them
-from a discarded full W*size_mult x H*size_mult composite (dcc.synth's
-generate_sample + cut_refiner_crops -- still THE canonical full-frame
-contract, see that module's docstring, and RefinerVal's val anchor, both
-untouched by this module).
-
-fast_refiner_crops draws ONE board placement (H) per call, via dcc.synth's
-own _sample_affine/_sample_perspective/_perspective_factor -- the SAME
-samplers generate_sample uses, over the SAME virtual W*size_mult x
-H*size_mult canvas -- then renders each accepted corner's crop by warping
-only its own (24 + 2*_MARGIN)^2 window through H (H_win =
-T(-(cx-12-_MARGIN), -(cy-12-_MARGIN)) @ H, see _render_fast_window), rather
-than warping and mostly discarding the full canvas: pixel-for-pixel what
-the full warp would produce at those coordinates (verified in
-tests/test_refiner_fast.py::test_window_equivalence). _MARGIN=8 gives
-blur/motion-blur/ghost their kernel/shift support (max combined extent
-~2.8+1+4=7.8px, see dcc.synth._apply_photometric's pinned step order)
-without needing full-canvas evaluation; the central 24x24 is taken after
-photometrics. The rev-2 aug pack's new position-dependent effects
-(specular, droplet bokeh, vignette, differencing's illumination lobe) need
-no _MARGIN change: like glare before them, they are pure FIELDS evaluated
-at absolute canvas coordinates via _apply_photometric's shared abs_grid, no
-neighbour-pixel data required. Droplet mode (b) and fixed-pattern noise
-DO need genuinely non-local pixel data (a resampled neighbourhood several
-times the disc's own size; a pattern fixed across the whole frame) that a
-40px window can't supply -- both are restricted to the full-canvas arm
-(window_origin is None) inside _apply_photometric itself, not by anything
-in this module.
-
-Corner choice + jitter mirror cut_refiner_crops' discipline exactly: pick
-up to refiner_max_corners corners (rng.permutation over the visible ones),
-j ~ U(-refiner_jitter_px, refiner_jitter_px)^2, resample <=3x to keep the
-true offset inside the 64x64@8x (+-3.9375px) support and the crop within a
-12px margin of the virtual canvas edge.
-
-Background/histogram-match: match_histograms costs ~2.1ms/call, too slow
-to pay per-crop, so _cached_bg_match memoises (decoded image, board render
-matched to it) per background path (~32-entry LRU, per-worker since torch
-spawns one process per DataLoader worker) -- every crop sharing a
-background reuses the match. The bg file CHOICE is still rng-driven per
-call (deterministic); the match itself runs against the RAW DECODED image,
-not the full path's flip/rotate/crop-prepped canvas -- an accepted
-approximation (flip/rotation are histogram-invariant, only the canvas crop
-differs). Each crop's own background tile is an independent random
-(_PATCH, _PATCH) crop of the cached decoded image, drawn fresh per corner
-(background diversity within one H draw, unlike the full arm which shares
-one composite's background across all of its harvested crops).
-
-mixed_refiner_crops(cfg, rng, bg_files) is the stream entry point: an
-in-worker per-call coin (rng.random() < synth.refiner_full_frac) picks the
-full arm -- generate_sample(occlude=False, force_negative=False) +
-cut_refiner_crops, verbatim, for distribution insurance (global-photometric
-realism the fast arm's local evaluation can't reproduce) -- or the fast arm
-otherwise. Both arms return the same [{"crop": uint8 (24,24), "d":
-float64[2]}, ...] schema.
-
-Determinism: every draw goes through the passed-in rng, in this order: bg-
-file index (+ a fresh draw on each failed decode), _sample_affine's draws,
-_sample_perspective's draws (see dcc.synth's module docstring for both),
-then per accepted corner: jitter (<=3 tries), then the background-tile crop
-position, then photometrics. The fast arm's stream need not bit-match the
-full arm's -- it is its own documented sequence.
+"""Refiner training crops: mixed_refiner_crops(cfg, rng, bg_files) returns [{crop (24x24 uint8), d
+(sub-pixel offset)}], mostly from the fast local-window renderer (fast_refiner_crops) and a
+synth.refiner_full_frac share from full composites.
 """
 import cv2
 import numpy as np
@@ -79,9 +19,6 @@ _BG_CACHE_MAXSIZE = 32
 
 
 def _cached_bg_match(bg_path, board_3ch):
-    """(decoded image, matched-to-it board render) for `bg_path`, memoised per path (see module
-    docstring) -- match_histograms is the expensive step this amortizes.
-    """
     if bg_path in _BG_MATCH_CACHE:
         entry = _BG_MATCH_CACHE.pop(bg_path)
         _BG_MATCH_CACHE[bg_path] = entry
@@ -103,23 +40,11 @@ def _cached_bg_match(bg_path, board_3ch):
 
 
 def _window_transform(Hmat, wx0, wy0):
-    """H conjugated to a (wx0, wy0)-origin window -- the T @ Hmat step _render_fast_window needs
-    internally and fast_refiner_crops needs again (rev-2 aug pack, task #29) to re-derive the
-    window's own board-mask slice for _apply_photometric's board_mask arg, without
-    _render_fast_window's own 2-tuple return growing a 3rd element (which would break
-    tests/test_refiner_fast.py::test_window_equivalence's positional unpack -- the same
-    constraint dcc.synth._warp_mask works around for _composite_board).
-    """
     T = np.array([[1.0, 0.0, -wx0], [0.0, 1.0, -wy0], [0.0, 0.0, 1.0]])
     return T @ Hmat
 
 
 def _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy, cfg=None):
-    """Pure per-corner window compositor -- no rng, factored out so it can be unit tested directly
-    against the corresponding window of a real dcc.synth._composite_board call (see
-    tests/test_refiner_fast.py::test_window_equivalence), mirroring dcc.synth.place_cutout's
-    role for _apply_cutouts.
-    """
     wx0, wy0 = cx - 12 - _MARGIN, cy - 12 - _MARGIN
     H_win = _window_transform(Hmat, wx0, wy0)
     warped_board = cv2.warpPerspective(matched, H_win, (_PATCH, _PATCH), flags=cv2.INTER_LINEAR,
@@ -141,9 +66,6 @@ def _render_fast_window(Hmat, matched, mask_src, bg_tile, cx, cy, cfg=None):
 
 
 def fast_refiner_crops(cfg, rng, bg_files):
-    """The fast arm: one board placement (H), one cached background match, up to
-    refiner_max_corners local-window crops.
-    """
     syn = cfg["synth"]
     W, H = cfg["input_size"]
     size_mult = syn["refiner_res_mult"]
@@ -215,13 +137,6 @@ def fast_refiner_crops(cfg, rng, bg_files):
 
 
 def mixed_refiner_crops(cfg, rng, bg_files):
-    """Stream entry point: an explicit-Generator coin per call against
-    cfg["synth"]["refiner_full_frac"] picks the full arm (generate_sample + cut_refiner_crops,
-    verbatim) or the fast arm (fast_refiner_crops) -- the mixed-stream distribution insurance
-    described in this module's docstring; see configs/default.yaml's refiner_full_frac comment
-    for why it is an in-worker per-sample coin rather than a dedicated worker or a cross-process
-    queue.
-    """
     if rng.random() < cfg["synth"]["refiner_full_frac"]:
         size_mult = cfg["synth"]["refiner_res_mult"]
         record, _ = generate_sample(cfg, rng, bg_files, size_mult=size_mult,

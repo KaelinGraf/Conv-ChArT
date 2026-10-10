@@ -1,6 +1,5 @@
-"""Sample viewer — eyeball detector/refiner training samples and their
-GT targets before or during training. Argparse runs before any heavy import
-so --help never needs dcc/numpy/cv2/matplotlib.
+"""Sample viewer.
+    PYTHONPATH= python tools/view.py --stream detector|refiner --n 16 --out sheet.png [--index I] [--channels] [--show]
 """
 import argparse
 import sys

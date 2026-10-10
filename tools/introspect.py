@@ -1,11 +1,6 @@
-"""Introspection & visualisation CLI for the Conv-ChArT detector (conference
-demo). Seven presentation-grade panels rendered from a single forward pass
-over one SynthVal sample or a raw image: pipeline end-to-end, 3D heatmap
-landscape, bottleneck-attention maps, decoder skip gates, a gate
-selectivity probe (skip/conditioning/gated/suppressed against a GT
-board-region mask), an effective-receptive-field probe, and encoder feature
-maps. No --ckpt -> an UNTRAINED DetectorNet, flagged on every figure title.
-Argparse runs before any heavy import so --help never needs torch/dcc/matplotlib.
+"""Introspection panels for a detector.
+    PYTHONPATH= python tools/introspect.py --ckpt C [--refiner-ckpt R] --index 7 --out introspect_out/ [--panels a,b,...]
+Without --ckpt the panels show an untrained network.
 """
 import argparse
 import sys
@@ -42,10 +37,6 @@ def build_parser():
 
 
 def _load_ckpt(model, path, device):
-    """torch.load; accepts a raw state_dict OR a trainer ckpt dict with 'model'/'ema' keys (ema
-    preferred). weights_only=False: these are the project's own local checkpoints, not untrusted
-    downloads.
-    """
     import torch
     if not path:
         return False
@@ -66,9 +57,6 @@ def _suptitle(ckpt_path, tag, trained):
 
 
 def _sample(cfg, args):
-    """(image uint8 (H,W), tag, record|None) -- tag is filename-safe, used in every out path;
-    record is generate_sample's own dict (GT "corners" etc), None for a raw --image file.
-    """
     import cv2
     if args.image:
         img = cv2.imread(args.image, cv2.IMREAD_GRAYSCALE)
@@ -84,7 +72,6 @@ def _sample(cfg, args):
 
 
 def _peak_or_query(args, prob_hm_2d):
-    """(x, y) float: --query-xy if given, else the strongest heatmap peak."""
     import numpy as np
     if args.query_xy is not None:
         return args.query_xy
@@ -93,9 +80,6 @@ def _peak_or_query(args, prob_hm_2d):
 
 
 def _peaks_only(prob_hm_2d, tau=0.3):
-    """Peak decode only (the first stage of the inference pipeline), inlined here: 3x3
-    maxpool-equality peaks on sigmoid(hm).
-    """
     import torch
     import torch.nn.functional as F
     t = torch.from_numpy(prob_hm_2d)[None, None]
@@ -105,11 +89,6 @@ def _peaks_only(prob_hm_2d, tau=0.3):
 
 
 def _forward_hooked(model, x):
-    """Single no_grad forward pass, capturing e1..e5 outputs, each attention block's input
-    (pre-n1), and gate3/gate4's exact call args -- so gate.alpha(*args, **kwargs) afterward
-    replays the same computation forward used internally (the mechanism the attention/gates
-    panel briefs name explicitly).
-    """
     import torch
     feats, blk_in, gate_args, handles = {}, [], {}, []
     for n in ("e1", "e2", "e3", "e4", "e5", "d4", "d3", "d2", "d1"):
@@ -333,12 +312,6 @@ def panel_gates(model, x, image, args, out, tag, suptitle, dpi, show):
 
 
 def _swap_donor_gate_args(model, cfg, args, device):
-    """A second, unrelated frame's gate_args -- the conditioning-ablation swap test (gate-actor
-    Task C variant 4): wrong-image `g` (conditioning), right-image `skip`, is the cleanest probe
-    of whether alpha actually depends on its conditioning signal. Always drawn from SynthVal
-    (bit- identical, board present with high probability) regardless of whether the main sample
-    came from --image, so the swap is available even for a raw-file invocation.
-    """
     import torch
     from dcc.dataset import SynthVal
     val_size = cfg["synth"]["val_size"]
@@ -351,15 +324,6 @@ def _swap_donor_gate_args(model, cfg, args, device):
 
 
 def panel_gate_probe(model, x, image, out, tag, suptitle, dpi, show, corners=None, donor_gate_args=None):
-    """Selectivity probe (Kaelin 2026-07-28): does an AttnGate's alpha actually vary spatially with
-    content, or does it just attenuate the whole skip uniformly? panel_gates only shows alpha
-    itself; this adds the skip (s3) and conditioning signal (z) alpha is computed FROM, the
-    gated skip (s3*alpha) and what got thrown away (s3*(1-alpha)), and an alpha histogram
-    against the pass-through init value (sigmoid(3)=0.9526). skip and z are aggregated over
-    channels two ways -- channel-mean(abs) AND channel-max(abs), since they tell different
-    stories (mean can hide a few strongly-selective channels; max can hide that most channels
-    are flat).
-    """
     import numpy as np
     import cv2
     import torch
@@ -374,7 +338,6 @@ def panel_gate_probe(model, x, image, out, tag, suptitle, dpi, show, corners=Non
         return
 
     def chan_reduce(feat):
-        """(channel-mean(abs), channel-max(abs)) 2D maps from a (1,C,h,w) tensor."""
         f = feat[0].abs()
         return f.mean(dim=0).cpu().numpy(), f.max(dim=0).values.cpu().numpy()
 
@@ -441,10 +404,6 @@ def panel_gate_probe(model, x, image, out, tag, suptitle, dpi, show, corners=Non
 
 
 def panel_gate_flow(model, x, image, out, tag, suptitle, dpi, show, corners=None):
-    """Minimal, explicitly-labelled view of WHAT THE DECODER ACTUALLY EATS (Kaelin 2026-07-28,
-    asked for after panel_gate_probe proved too busy): exactly the four maps on the path into
-    d3's convolution, plus the alpha histogram.
-    """
     import numpy as np
     import cv2
     import torch
@@ -521,10 +480,6 @@ def panel_gate_flow(model, x, image, out, tag, suptitle, dpi, show, corners=None
 
 
 def panel_gate_ablation(model, x, image, out, tag, suptitle, dpi, show, corners=None, donor_gate_args=None):
-    """Conditioning-ablation (Kaelin/team-lead Task C, 2026-07-28): does alpha actually depend on
-    its conditioning signal g, or would skip s3 alone produce the same mask -- i.e. has the gate
-    degenerated into a skip-driven saliency filter that ignores global board context?
-    """
     import numpy as np
     import cv2
     import torch
@@ -595,9 +550,6 @@ def panel_gate_ablation(model, x, image, out, tag, suptitle, dpi, show, corners=
 
 
 def _erf_grad(m, x, args):
-    """Unit-gradient effective-receptive-field probe: backward from one class-head logit (the
-    strongest ID, or --query-xy's cell) to the input.
-    """
     import numpy as np
     xin = x.clone().requires_grad_(True)
     hm_logits, cls_logits = m(xin)
@@ -633,7 +585,6 @@ def panel_erf(model, x, image, args, out, tag, suptitle, dpi, show, model_b=None
 
 
 def panel_features(model, x, image, out, tag, suptitle, dpi, show, k=3, corners=None):
-    """Encoder features as INDIVIDUAL CHANNELS, never a channel reduction."""
     import cv2
     import matplotlib.pyplot as plt
     import numpy as np
@@ -648,8 +599,6 @@ def panel_features(model, x, image, out, tag, suptitle, dpi, show, k=3, corners=
     gt = np.array([[c["x"], c["y"]] for c in (corners or []) if c.get("visible", True)],
                   dtype=np.float32)
     def board_mask(h, w):
-        """Convex hull of the visible INNER corners at this stage's resolution, dilated one
-        cell: the inner-corner hull understates the board by half a square on every side."""
         if len(gt) < 3:
             return None
         hull = cv2.convexHull((gt / (W / w)).astype(np.float32))

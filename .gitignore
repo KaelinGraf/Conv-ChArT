@@ -1,3 +1,5 @@
+# configs/, tools/, tests/ and docs/ are default-deny: only files named with ! are published.
+# To publish another file there, add a !path line.
 __pycache__/
 *.pyc
 .pytest_cache/

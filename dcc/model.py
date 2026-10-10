@@ -1,32 +1,6 @@
-"""DetectorNet (Stage-1 hybrid conv encoder -> MHSA bottleneck with 2D axial
-RoPE -> gated staggered-tap decoder, two factorised heads) and Refiner
-(Stage-2 sub-pixel corner refiner). Architecture map:
-
-    e1 -> e2 -> e3 -> e4 -> e5      conv encoder, H -> H/16, widths 32-64-128-256-256
-                          |
-                       blocks        MHSA+MLP x n_blocks, axial RoPE, over H/16 tokens
-                          |
-    d4 <- gate4(e4) <----+          H/16 -> H/8
-    d3 <- gate3(e3) <- d4           H/8  -> H/4   --tap--> cls (H/4, n_cls ch)
-    d2 <-       e2  <- d3           H/4  -> H/2, ungated
-    d1 <-       e1  <- d2           H/2  -> H,   ungated  --tap--> hm  (H, 1ch)
-
-Two-grids: "attention cells" are the H/16 bottleneck tokens (16 px each) --
-the sole board-scale context mechanism. "class cells" are the H/4 grid the
-class head reads out on (4 px each, identity not context). Don't conflate them.
-
-freeze_trunk boundary: retargeting to a new board freezes everything except
-cls.* -- trunk, both gates, the decoder and the heatmap head transfer to a new
-board unchanged; only the class head (board-specific identity) retrains.
-
-Three design choices are called out again at their own site below, since
-they depart from what a textbook hybrid conv-transformer encoder would do:
-the RoPE spectrum is wavelength- rather than base-anchored (AxialRoPE), qkv
-is indexed rather than tuple-unpacked for ONNX-tracer safety (Block.qkv_heads),
-and the attention gates zero their psi weight at init rather than relying on
-bias alone (AttnGate). Both networks return RAW LOGITS -- no sigmoid inside
-forward; losses.py / the pipeline apply it. ONNX-safe throughout: no complex
-dtypes, no grid_sample, no shape-dependent control flow beyond batch size.
+"""Networks. DetectorNet(H, W, n_cls=..., **detector_kwargs(cfg)) maps a (B,1,H,W) image in [0,1] to
+(heatmap logits, class logits at H/4); Refiner() maps (B,1,24,24) crops to (B,1,64,64) logits;
+refiner_for(state_dict) builds a Refiner matching a checkpoint's width.
 """
 import torch
 import torch.nn as nn
@@ -48,10 +22,6 @@ def up2(x):
 
 
 class AxialRoPE(nn.Module):
-    """2D axial RoPE, WAVELENGTH-ANCHORED spectrum: rather than the common single-`base`
-    parameterisation (`base**(-i/(n-1))`), lambda_min and lambda_max are set directly.
-    """
-
     def __init__(self, head_dim, h, w, lambda_min=2.5, lambda_max=None):
         super().__init__()
         n = head_dim // 4
@@ -75,8 +45,6 @@ class AxialRoPE(nn.Module):
 
 
 class Block(nn.Module):
-    """Pre-norm MHSA + MLP (timm vision_transformer.Block shape), RoPE on Q,K."""
-
     def __init__(self, d, heads, rope, mlp_ratio=4, xsa=False):
         super().__init__()
         self.heads, self.rope, self.xsa = heads, rope, xsa
@@ -87,7 +55,6 @@ class Block(nn.Module):
                                  nn.Linear(mlp_ratio * d, d))
 
     def qkv_heads(self, x_normed):
-        """(B,T,d) -> rotated q, k and v, each (B, heads, T, head_dim)."""
         B, T, d = x_normed.shape
         qkv = (self.qkv(x_normed).reshape(B, T, 3, self.heads, d // self.heads)
                .permute(2, 0, 3, 1, 4))
@@ -105,10 +72,6 @@ class Block(nn.Module):
 
 
 class AttnGate(nn.Module):
-    """Oktay additive gate (Attention U-Net eq. 1-2): alpha = sigmoid(psi(relu(Wx*skip_down +
-    Wg*g))), bilinearly upsampled to skip res, elementwise on the skip.
-    """
-
     def __init__(self, skip_ch, gate_ch, inter_ch):
         super().__init__()
         self.wx = nn.Conv2d(skip_ch, inter_ch, 1, stride=2, bias=False)
@@ -127,10 +90,6 @@ class AttnGate(nn.Module):
 
 
 class DetectorNet(nn.Module):
-    """Stage-1 network -- see module docstring for the architecture map, the two-grids note and the
-    freeze_trunk boundary.
-    """
-
     def __init__(self, h, w, d=256, heads=8, n_blocks=2, rope_lambda_min=2.5, n_cls=16, attend_div=16,
                  gates=True, width_mult=1.0,
                 xsa=False, e4_dilated=True):
@@ -218,19 +177,11 @@ class DetectorNet(nn.Module):
 
 
 def refiner_for(state_dict):
-    """Build a Refiner whose width MATCHES a checkpoint, inferred from the weights themselves."""
     c64 = state_dict["body.1.0.weight"].shape[0]
     return Refiner(width_mult=c64 / 64.0)
 
 
 def detector_kwargs(cfg):
-    """DetectorNet's config-tunable constructor kwargs (attend_div, n_blocks, heads,
-    rope_lambda_min, xsa), read from a loaded cfg dict with the exact same defaults
-    DetectorNet's own signature uses -- the one place tools/train_detector.py and
-    tools/preflight.py both read these from, so the two model-construction sites can't drift
-    apart. n_cls is deliberately excluded: it's derived from cfg["board"] via
-    dcc.board.n_corners, not a flat cfg key.
-    """
     return {"attend_div": cfg.get("attend_div", 16), "n_blocks": cfg.get("attn_blocks", 2),
             "heads": cfg.get("attn_heads", 8), "rope_lambda_min": cfg.get("rope_lambda_min_cells", 2.5),
             "xsa": cfg.get("xsa", False),
@@ -241,12 +192,7 @@ def detector_kwargs(cfg):
 
 
 class Refiner(nn.Module):
-    """Sub-pixel refiner."""
-
     def __init__(self, width_mult=1.0):
-        """width_mult scales the BODY channels only (Kaelin 2026-07-31: "you can change the refiner
-        if you want too/optimise it").
-        """
         super().__init__()
         c = lambda n: max(8, int(round(n * width_mult / 8)) * 8)
         self.body = nn.Sequential(conv_bn_relu(1, c(32)), conv_bn_relu(c(32), c(64)),

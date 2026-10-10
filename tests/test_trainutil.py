@@ -1,3 +1,6 @@
+"""Training utilities: LR schedule, EMA, checkpoints, parameter groups, JSONL logger.
+    PYTHONPATH= python -m pytest tests/test_trainutil.py -q
+"""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -12,11 +15,6 @@ from dcc.trainutil import EMA, JsonlLogger, cosine_lr, load_ckpt, param_groups, 
 
 
 class _Toy(nn.Module):
-    """Linear + BatchNorm1d -- one bias-bearing layer, one norm layer, so param_groups has both
-    exclusion rules to exercise, and EMA/ckpt tests have both a floating buffer
-    (running_mean/var) and a non-floating one (num_batches_tracked) to round-trip.
-    """
-
     def __init__(self):
         super().__init__()
         self.lin = nn.Linear(4, 4)
@@ -111,9 +109,6 @@ def test_ckpt_roundtrip(tmp_path):
 
 
 def test_ckpt_restore_optim_false(tmp_path):
-    """freeze_trunk retarget path: restore_optim=False must still restore model/ema and leave the
-    caller's optimizer (built fresh, e.g. over a different param subset) completely untouched.
-    """
     torch.manual_seed(2)
     model = _Toy()
     optim = torch.optim.AdamW(param_groups(model, wd=0.01), lr=1e-3)

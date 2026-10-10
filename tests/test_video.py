@@ -1,5 +1,6 @@
-"""Video self-supervision: harvest geometry (dcc.video), real-frame targets and masks (dcc.realdata),
-the masked loss (dcc.losses), and ONNX import (dcc.onnx_import). CPU only, no corpus needed."""
+"""Video self-supervision: harvest geometry, visibility, masks, masked loss, mixed stream, ONNX import.
+    PYTHONPATH= python -m pytest tests/test_video.py -q
+"""
 import json
 
 import cv2
@@ -18,7 +19,6 @@ LAT = canon_lattice(4)
 
 
 def _H(s=40.0, theta=0.3, tx=320.0, ty=240.0, persp=(2e-4, -1e-4)):
-    """canonical -> 640x480 image homography of a board roughly centred at (tx, ty)."""
     c, sn = np.cos(theta), np.sin(theta)
     A = np.array([[s * c, -s * sn, tx - s * 2.5 * (c - sn)], [s * sn, s * c, ty - s * 2.5 * (sn + c)], [0, 0, 1.0]])
     P = np.array([[1, 0, 0], [0, 1, 0], [persp[0], persp[1], 1.0]])
@@ -26,7 +26,6 @@ def _H(s=40.0, theta=0.3, tx=320.0, ty=240.0, persp=(2e-4, -1e-4)):
 
 
 def _frame(H, bg=100.0, gain=1.0, noise=0.0, rng=None):
-    """Render the board through a canonical -> image homography H into a 640x480 frame."""
     img, _ = render_board(480)
     board = 30 + 180 * img.astype(np.float32) / 255.0
     Ar = np.array([[96.0, 0, -0.5], [0, 96.0, -0.5], [0, 0, 1.0]])
@@ -111,8 +110,6 @@ def test_real_targets_and_masks():
 
 
 def test_noise_model_and_darkening_reproduce_a_dark_frame():
-    """The clip's noise curve is recovered from its own frames, and a bright frame darkened to gain g
-    carries the noise the clip would have had at that level."""
     from dcc.realdata import darken
     rng = np.random.default_rng(4)
     shot, read_var = 0.05, 0.3
@@ -143,7 +140,6 @@ def test_masked_loss_is_backward_compatible():
 
 @pytest.fixture()
 def tiny_world(tmp_path):
-    """A 160x120 world: three noise backgrounds and a two-frame harvest directory."""
     rng = np.random.default_rng(3)
     bgd = tmp_path / "bg"
     bgd.mkdir()

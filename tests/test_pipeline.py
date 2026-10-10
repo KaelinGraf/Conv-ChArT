@@ -1,3 +1,5 @@
+"""Stage-3 inference functions and the detect() contract.  PYTHONPATH= python -m pytest tests/test_pipeline.py -q
+"""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -16,10 +18,6 @@ CANON = np.array([[(i % 4) + 1.0, (i // 4) + 1.0] for i in range(16)], dtype=np.
 
 
 def _build_pose(rng, tilt_deg, s=60.0, W=1600, H=1200, phi=None, psi=None):
-    """gen_eval_pose-style K@[r1|r2|t] synthetic pose (independent of tools/gen_eval_pose.py, not
-    imported): in-plane angle phi and tilt axis psi (random unless pinned by the caller), tilt
-    about that axis, apparent scale s at the board centre.
-    """
     cx, cy = (W - 1) / 2, (H - 1) / 2
     f = 1.0 * W
     K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1.0]])
@@ -37,12 +35,6 @@ def _build_pose(rng, tilt_deg, s=60.0, W=1600, H=1200, phi=None, psi=None):
 
 
 def test_readout_convention():
-    """The decisive test: read_ids at the exact rendered corner xy must recover the rendered index
-    always, with confidence >= the analytic worst case (bilinear split 4 ways at a shared cell
-    corner, sigma=1 cell -- measures ~0.83, well above the 0.24 floor asserted here) and ~1.0 at
-    cell-centre phase. align_corners=True is independently checked wrong on a crafted case to
-    lock the convention.
-    """
     W, H = 256, 256
     rng = np.random.default_rng(0)
     worst_conf = 1.0
@@ -88,10 +80,6 @@ def test_readout_convention():
 
 
 def test_peaks_and_merge():
-    """Two isolated Gaussians (well-separated) + one exact 2-px plateau tie. peaks() must find all
-    4 raw local maxima (both plateau pixels pass the 3x3 equality test); merge_close collapses
-    the tie to one; top_k caps in descending-score order.
-    """
     hm = np.zeros((40, 40), dtype=np.float32)
     hm[10, 10] = 0.9
     hm[30, 30] = 0.6
@@ -120,9 +108,6 @@ def test_peaks_and_merge():
 
 
 def test_border_bypass():
-    """A peak whose 24x24 sensor crop would cross the frame border is excluded (never
-    reflect-padded); one that exactly touches (12 px margin) is kept.
-    """
     def input_for_centre(c, r):
         return (c + 0.5) * r - 0.5
 
@@ -144,14 +129,6 @@ def test_border_bypass():
 
 
 def test_soft_argmax():
-    """render_refiner_target(d) (real sigma=1.5, forced-peak pixel) recovers u* within 0.35; a
-    manually-built, narrower Gaussian (sigma=0.5, so the 5x5 readout window captures effectively
-    all its mass) recovers u* within 0.05 and locks the u=x/col, v=y/row orientation. d is
-    sampled from [-3.5, 3.5], staying inside render_refiner_target's +/-3.9375 support -- the
-    outer ~0.4 px sliver is excluded because there the analytic Gaussian itself is truncated by
-    the 64x64 canvas edge, a distinct and already-understood degeneracy from the window-vs-sigma
-    truncation this test targets.
-    """
     rng = np.random.default_rng(1)
     worst_forced = 0.0
     for _ in range(100):
@@ -258,9 +235,6 @@ def test_pnp_ippe():
 
 
 def test_pnp_empty_solver_result(monkeypatch):
-    """OpenCV's solvepnp.cpp wraps IPPE in a bare catch(...): internal solver failures are silently
-    swallowed and ZERO solutions returned.
-    """
     rng = np.random.default_rng(11)
     K, R, t, img_pts = _build_pose(rng, tilt_deg=30.0, s=60.0)
     monkeypatch.setattr(cv2, "solvePnPGeneric", lambda *a, **k: (0, [], [], np.zeros((0, 1))))

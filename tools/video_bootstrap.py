@@ -1,8 +1,8 @@
 """Self-supervised fine-tuning from video of the board.
     PYTHONPATH= python tools/video_bootstrap.py rounds --config C --base DET.onnx|.pt --refiner REF.onnx|.pt \
         --train-video V [V ...] --heldout-video V [V ...] --backgrounds IMAGE_DIR --workdir W --rounds 2
-Subcommands: import-onnx, make-clip (synthetic test clip with ground truth), harvest, finetune-config,
-eval, rounds; each takes --help. Videos may be files or image directories.
+Subcommands: import-onnx, export-onnx, make-clip (synthetic test clip with ground truth), harvest,
+finetune-config, eval, synth-val, rounds; each takes --help. Videos may be files or image directories.
 """
 import argparse
 import json
@@ -54,6 +54,19 @@ def build_parser():
     s.add_argument("--from", dest="src", required=True, help="base trainer .pt (import-onnx makes one)")
     s.add_argument("--records", nargs="+", required=True, help="harvest clip directories")
     s.add_argument("--out", required=True)
+
+    s = sub.add_parser("export-onnx", help="trainer checkpoint -> ONNX graph shaped like the deployed one")
+    s.add_argument("--ckpt", required=True)
+    s.add_argument("--out", required=True)
+    s.add_argument("--kind", choices=["detector", "refiner"], default="detector")
+    s.add_argument("--config", default=None, help="architecture config, only for an .onnx --ckpt")
+
+    s = sub.add_parser("synth-val", help="synthetic validation (M-01/M-02/M-04) of one detector, as JSON")
+    s.add_argument("--detector", required=True, help=".pt or .onnx")
+    s.add_argument("--config", default=None, help="synthetic set and thresholds; default the detector's own cfg")
+    s.add_argument("--backgrounds", default=None)
+    s.add_argument("--val-size", type=int, default=300)
+    s.add_argument("--out", default=None)
 
     s = sub.add_parser("eval", help="score detectors on a clip")
     s.add_argument("--video", required=True)
@@ -490,6 +503,40 @@ def evaluate(src, det, ref, cfg, gt_path=None, labels_dir=None, camera=(None, No
     return (out, rows) if return_rows else out
 
 
+def cmd_export_onnx(a):
+    import torch
+    from dcc.onnx_import import load_detector, load_refiner, onnx_parity
+    Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+    if a.kind == "detector":
+        model, cfg = load_detector(a.ckpt, _load_cfg(a.config), "cpu")
+        W, H = cfg["input_size"]
+        shape, names, axes = (1, 1, H, W), ["hm", "cls"], None
+    else:
+        model = load_refiner(a.ckpt, "cpu")
+        shape, names, axes = (1, 1, 24, 24), ["logits"], {"input": {0: "n"}, "logits": {0: "n"}}
+    torch.onnx.export(model.eval(), torch.randn(*shape), a.out, opset_version=17, dynamo=False,
+                      input_names=["input"], output_names=names, dynamic_axes=axes)
+    diff = onnx_parity(model, a.out, (4,) + shape[1:] if axes else shape)
+    print(f"[export-onnx] {a.ckpt} -> {a.out}: max |torch - onnxruntime| = {diff:.2e}")
+    if diff > 1e-3:
+        raise SystemExit("exported graph disagrees with the checkpoint")
+
+
+def cmd_synth_val(a):
+    import copy
+    from dcc.onnx_import import load_detector
+    det, cfg = load_detector(a.detector, _load_cfg(a.config), "cuda")
+    vcfg = copy.deepcopy(_load_cfg(a.config) or cfg)
+    if a.backgrounds:
+        vcfg["synth"]["backgrounds"] = str(a.backgrounds)
+    vcfg["synth"]["val_size"] = a.val_size
+    res = synth_val(det, vcfg, a.val_size)
+    print(f"[synth-val] {a.detector}: {_sv_line(res)}")
+    if a.out:
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.out).write_text(json.dumps(res, indent=1))
+
+
 def cmd_eval(a):
     cfg_arg = _load_cfg(a.config)
     dev = _device(a.device)
@@ -604,7 +651,8 @@ def cmd_rounds(a):
 def main():
     a = build_parser().parse_args()
     {"import-onnx": cmd_import_onnx, "make-clip": cmd_make_clip, "harvest": cmd_harvest,
-     "finetune-config": cmd_finetune_config, "eval": cmd_eval, "rounds": cmd_rounds}[a.cmd](a)
+     "finetune-config": cmd_finetune_config, "eval": cmd_eval, "rounds": cmd_rounds,
+     "export-onnx": cmd_export_onnx, "synth-val": cmd_synth_val}[a.cmd](a)
 
 
 if __name__ == "__main__":

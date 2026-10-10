@@ -301,7 +301,7 @@ def main():
     d = load(R6 / "08_ablations_peak_sharpness.json")
     table(["arm", "step", "n", "spread median px", "spread mean px", "peak median", "concentration median"], [[k, v["step"], v["n"], f4(v["spread_med"]), f4(v["spread_mean"]), f4(v["peak_med"]), f4(v["conc_med"])] for k, v in d.items()])
     doc.append("Notes of record (links): `08_ablations_NOTE_sigma_justification.md`, `08_ablations/00_QUEUE_AND_DECISION_RULE.md`, `08_ablations/00_BACK_POCKET_deferred_arms.md`, `08_ablations/00_README_LAYOUT.md`, `08_ablations/HEAD_TO_HEAD.md`.\n")
-    include_md(R6 / "08_ablations" / "HEAD_TO_HEAD.md", shift=5)
+    doc.append("(`08_ablations/HEAD_TO_HEAD.md` is a mid-campaign admin snapshot with stale running/stopped markers and is deliberately not reproduced; the summary table above supersedes it.)\n")
 
     h(3, "B7. Refiner (`02_refiner`)")
     doc.append("Guard-sweep numbers of record are in Part A, Section 5 (n = 6,421 crops). Raw per-crop records: `guard_sweep.json`, `tail_composition.json`.\n")

@@ -17,6 +17,7 @@ remain forbidden as R. An ensemble variance over frames is a different object an
 | `pose_REL882_B1.json` | `tools/eval_pose_ours.py` output; `error_cov` block holds the statistics below |
 | `pose_REL882_B1_per_image.jsonl` | per solved frame: `drot_rad[3]`, `dt_sq[3]` (camera frame), `s_px`, `f_px`, `n_used`, `rms_px`, `ambiguous` |
 | `kalman_R_REL882.json` | the R values extracted for the filter, with notes |
+| `KALMAN_COVARIANCE_HOWTO.md` | how the live ROS node publishes R and what the filter must do with it (2026-10-10) |
 | `logs/gen_eval_pose_rev6_b1.log` | pose-set regeneration (the gitignored set had to be rebuilt; it is seed-deterministic) |
 
 **Reproduction gate passed.** The regenerated `eval_pose_rev6_b1` reproduces the banked

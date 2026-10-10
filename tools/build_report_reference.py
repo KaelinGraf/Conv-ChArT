@@ -379,12 +379,18 @@ def main():
     for name in ("runtime_latency.json", "trt_vs_cuda_ep.json", "python_detect_stages.json"):
         doc.append(f"`25_runtime_latency/{name}`:\n```json\n" + json.dumps(load(R6 / "25_runtime_latency" / name), indent=1) + "\n```\n")
 
-    h(3, "B13. Working range (`17_range/working_range.json`)")
-    d = load(R6 / "17_range" / "working_range.json")
-    doc.append(f"Board {d['board_mm']} mm ({d['square_mm']} mm squares), OV2311 pitch {d['pixel_pitch_um']} um, rho {d['rho']} (1600x1200 -> 640x480), bands from measured ID/recall: {json.dumps(d['bands_s'])}\n")
-    table(["lens", "f_px at input", "HFOV deg", "core m", "usable m", "degraded m"],
-          [[k, f"{v['f_px_input']:.0f}", f"{v['hfov_deg']:.1f}", f"{v['core']['near_m']:.2f}-{v['core']['far_m']:.2f}", f"{v['usable']['near_m']:.2f}-{v['usable']['far_m']:.2f}", f"{v['degraded']['near_m']:.2f}-{v['degraded']['far_m']:.2f}"] for k, v in d["ranges_m"].items()])
-    table(["s px", "ID", "recall"], [[k, pct(v["id_acc"]), pct(v["recall"])] for k, v in d["measured"].items()])
+    h(3, "B13. Working range (`17_range/working_range_REL882.json` of record; `working_range.json` historical)")
+    for name, lab in (("working_range_REL882.json", "882k release sweep -- OF RECORD"), ("working_range.json", "HISTORICAL: 4.7M model, computed before the 2026-10-10 contiguity fix")):
+        d = load(R6 / "17_range" / name)
+        doc.append(f"**{lab}** (`{name}`): board {d['board_mm']} mm ({d['square_mm']} mm squares), OV2311 pitch {d['pixel_pitch_um']} um, rho {d['rho']} (1600x1200 -> 640x480); bands in s px (ID >= / recall >= : core 0.99/0.95, usable 0.96/0.95, degraded 0.80/0.90): {json.dumps(d['bands_s'])}\n")
+        rows = []
+        for k, v in d["ranges_m"].items():
+            cells = [k, f"{v['f_px_input']:.0f}", f"{v['hfov_deg']:.1f}", v.get("in_trained_envelope")]
+            for b in ("core", "usable", "degraded"):
+                cells.append(f"s {v[b]['s'][0]}-{v[b]['s'][1]}: {v[b]['near_m']:.3f}-{v[b]['far_m']:.3f} m" if b in v else "none")
+            rows.append(cells)
+        table(["lens", "f_px at input", "HFOV deg", "in trained lens envelope", "core", "usable", "degraded"], rows)
+        table(["s px", "ID", "recall"], [[k, pct(v["id_acc"]), pct(v["recall"])] for k, v in d["measured"].items()])
 
     h(3, "B14. SNR calibration of the sensor-noise axis (`03_robustness/snr_calibration.json`)")
     d = load(R6 / "03_robustness" / "snr_calibration.json")

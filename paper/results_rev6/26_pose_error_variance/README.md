@@ -6,8 +6,8 @@ for a kalman filter."
 **What this is.** The ENSEMBLE error statistics of the poses `dcc.pipeline.detect()` returns, over
 the 1000-frame B1 pose benchmark, for the 882k release detector + shared refiner. This is the
 constant measurement-noise covariance a Kalman filter can use. It is NOT the parked per-frame
-`pose_cov` / `sigma_px` (CLAUDE.md: "Uncertainty calibration is PARKED"; `pose_cov` is ~6x
-over-confident, NEES 11.2 against the chi-square-6 expectation of 6.0 on this very run). Those
+`pose_cov` / `sigma_px` (CLAUDE.md: "Uncertainty calibration is PARKED"; `pose_cov` is not usable as R --
+NEES mean 11.2, median 2.75, against the chi-square-6 expectation of 6.0 on this very run). Those
 remain forbidden as R. An ensemble variance over frames is a different object and is what was asked.
 
 ## Files

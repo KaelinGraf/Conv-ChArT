@@ -175,6 +175,29 @@ def test_mixed_stream_is_deterministic_and_masked(tiny_world):
         assert x["hm_mask"].shape == (120, 160) and x["cls_mask"].shape == (16, 30, 40)
 
 
+def test_epoch_sampling_mixes_at_exactly_frac_and_passes_over_every_frame(tiny_world, monkeypatch):
+    import dcc.realdata as R
+    seen, synthetic = [], [0]
+    get, gen = R.RealFrames.__getitem__, R.generate_sample
+
+    def spy_get(self, i):
+        seen.append(i)
+        return get(self, i)
+
+    def spy_gen(*a, **k):
+        synthetic[0] += 1
+        return gen(*a, **k)
+
+    monkeypatch.setattr(R.RealFrames, "__getitem__", spy_get)
+    monkeypatch.setattr(R, "generate_sample", spy_gen)
+    tiny_world["real"].update(frac=0.6, sampling="epoch")
+    it = iter(MixedStream(tiny_world, seed=3))
+    for _ in range(25):
+        next(it)
+    assert len(seen) == 15 and synthetic[0] == 10           # 60 % real over every 5 samples
+    assert all(sorted(seen[k:k + 2]) == [0, 1] for k in range(0, 14, 2))     # each pass: both frames once
+
+
 def test_onnx_import_round_trip(tmp_path):
     pytest.importorskip("onnx")
     pytest.importorskip("onnxruntime")

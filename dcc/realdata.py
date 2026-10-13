@@ -2,6 +2,12 @@
 the synthetic stream at cfg["real"]["frac"], with targets, ignore masks and augmentation, including
 darkening calibrated to each clip's own noise. tools/train_detector.py uses it when the config has a
 real: block.
+
+real.sampling "random" (the default) draws each sample real with probability frac and the real frame
+uniformly with replacement. "epoch" interleaves real and synthetic samples at exactly frac, and each
+loader worker passes over its own share of the real frames (all of them when there are fewer frames
+than workers) in a fresh order each pass, so between the workers every frame comes once per pass and
+a run of known length gives every frame a known number of passes.
 """
 import json
 from pathlib import Path
@@ -18,6 +24,7 @@ from dcc.targets import render_class_targets, render_heatmap
 
 REAL_DEFAULTS = {
     "frac": 0.3,
+    "sampling": "random",
     "darken_p": 0.4,
     "darken_gain_min": None,
     "darken_hard_frac": 0.5,
@@ -182,9 +189,26 @@ class MixedStream(IterableDataset):
         n_cls = n_corners(self.cfg.get("board"))
         ones_hm = torch.ones((H, W), dtype=torch.uint8)
         ones_cls = torch.ones((n_cls, H // 4, W // 4), dtype=torch.uint8)
+        epoch = self.rcfg["sampling"] == "epoch"
+        if epoch:
+            n_workers = info.num_workers if info is not None else 1
+            shard = np.arange(wid, len(real), n_workers) if len(real) >= n_workers else np.arange(len(real))
+            order, pos = rng.permutation(shard), 0
+        n = n_real = 0
         while True:
-            if rng.random() < frac:
-                img, rec, noise = real[int(rng.integers(len(real)))]
+            if epoch:
+                take_real = n_real + 1 <= frac * (n + 1) + 1e-9
+                n += 1
+            else:
+                take_real = rng.random() < frac
+            if take_real:
+                if epoch:
+                    if pos == len(order):
+                        order, pos = rng.permutation(shard), 0
+                    i, pos, n_real = int(order[pos]), pos + 1, n_real + 1
+                else:
+                    i = int(rng.integers(len(real)))
+                img, rec, noise = real[i]
                 assert img.shape == (H, W), f"real frame {img.shape} != input_size {(H, W)}"
                 img, corners = augment_real(img, rec["corners"], rec["outline"], rng, self.cfg, self.rcfg, noise)
                 yield render_real_targets(self.cfg, img, corners, self.rcfg)
